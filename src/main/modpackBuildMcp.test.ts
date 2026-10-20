@@ -6,7 +6,7 @@ import { expect, it, vi } from 'vitest'
 import { ModMindBridge, type ExternalAgentBridgeHandlers } from './externalAgents'
 import { MinecraftRuntimeManager } from './minecraftRuntime'
 import { CreationFeedbackService } from './creationFeedbackService'
-import { createModpackTemplate, addModpackModule } from './modpackService'
+import { createModpackTemplate, addModpackModule, adoptExternalModpack, auditImportedPackArtifacts, readModpackImportStatus } from './modpackService'
 import { createStoredZip } from './bedrockAddon'
 import type { ProjectInfo } from '../shared/types'
 vi.mock('electron', () => ({ app: { getPath: () => os.tmpdir() } }))
@@ -52,7 +52,10 @@ it('builds and synchronizes a linked Forge module through the workbench MCP and 
     Object.assign(runtime, { runGradleBuild: compile })
     const feedback = new CreationFeedbackService(project)
     const build = vi.fn(async () => ({ success: true, artifact: await feedback.build(() => runtime.buildProject()) }))
-    bridge = new ModMindBridge(project, { build } as unknown as ExternalAgentBridgeHandlers)
+    bridge = new ModMindBridge(project, {
+      build,
+      runtimeState: async () => ({ ...runtime.getState(), modpackImport: await readModpackImportStatus(project) })
+    } as unknown as ExternalAgentBridgeHandlers)
     const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
     const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
     child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] })
@@ -68,6 +71,24 @@ it('builds and synchronizes a linked Forge module through the workbench MCP and 
     expect(JSON.parse(await fs.readFile(result.artifact.path, 'utf8')).files).toContain('modmind-local-linked.jar')
     expect(JSON.parse(await fs.readFile(result.artifact.path, 'utf8')).artifacts).toEqual([expect.objectContaining({ name: 'modmind-local-linked.jar', sha256: expect.stringMatching(/^[a-f0-9]{64}$/) })])
     expect(await feedback.verifyLatestBuild()).toBe(true)
+
+    // The workbench reads the same advisory report and still enforces runtime validation.
+    const custom = path.join(project.path, 'mods', 'unrecognized.jar')
+    const original = createStoredZip([{ name: 'example/Unknown.class', data: Buffer.alloc(2048) }])
+    await fs.writeFile(custom, original)
+    await adoptExternalModpack(project, { format: 'instance', layout: 'instance', importedAt: '' })
+    const warnings = await auditImportedPackArtifacts(project)
+    expect(warnings).toEqual([expect.stringContaining('已按原包保留')])
+    const report = await rpc(child, 3, 'tools/call', { name: 'modmind_runtime_state', arguments: {} })
+    expect(report.result.isError).not.toBe(true)
+    expect(JSON.stringify(report.result)).toContain('已按原包保留')
+    expect(JSON.parse(report.result.content[0].text).modpackImport).toMatchObject({ compatibilityWarnings: warnings })
+    const rejected = await rpc(child, 4, 'tools/call', { name: 'modmind_build_project', arguments: {} })
+    expect(rejected.result.isError).toBe(true)
+    expect(JSON.stringify(rejected.result)).toContain('forge descriptor')
+    expect(await fs.readFile(custom)).toEqual(original)
+    const internal = await rpc(child, 5, 'tools/call', { name: 'modmind_read_project_file', arguments: { path: '.modmind/import/artifact-report.json' } })
+    expect(internal.result.isError).toBe(true)
   } finally {
     if (child && child.exitCode === null) {
       const exited = new Promise<void>(resolve => child!.once('close', () => resolve()))
