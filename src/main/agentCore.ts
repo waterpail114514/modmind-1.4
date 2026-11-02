@@ -21,7 +21,7 @@ export function redactSensitiveContent(relativePath: string, content: string): s
 }
 
 export function validateSnapshotId(value: unknown): string {
-  if (typeof value !== 'string' || !/^[0-9A-Za-z._-]{1,120}$/.test(value)) {
+  if (typeof value !== 'string' || value === '.' || value === '..' || !/^[0-9A-Za-z._-]{1,120}$/.test(value)) {
     throw new Error('Invalid snapshot ID')
   }
   return value
@@ -92,7 +92,15 @@ export async function restoreManagedTreeExact(
   }
   await inspect(snapshotRoot)
   const currentFiles = await listManagedFiles(destinationRoot, ignoreDirectory)
-  for (const relative of [...expected, ...expectedDirectories, ...currentFiles]) assertAgentWriteAllowed(destinationRoot, relative)
+  // Keep the all-path preflight before any mutation, while yielding between
+  // bounded batches so a large restore does not monopolize the main process.
+  let protectedPaths = 0
+  for (const paths of [expected, expectedDirectories, currentFiles]) {
+    for (const relative of paths) {
+      assertAgentWriteAllowed(destinationRoot, relative)
+      if (++protectedPaths % 32 === 0) await new Promise<void>(resolve => setImmediate(resolve))
+    }
+  }
   for (const relative of expectedDirectories) await fs.mkdir(resolveManagedPath(destinationRoot, relative), { recursive: true })
   for (const relative of expected) {
     const destination = resolveManagedPath(destinationRoot, relative)
@@ -170,10 +178,12 @@ export async function restoreManagedPathsFromSnapshot(
   const uniquePaths = [...new Set(changedFiles.map((file) => file.trim().replaceAll('\\', '/')).filter(Boolean))]
   // Validate every path before the first restore or deletion. A missing backup
   // for a recorded original must never be interpreted as a task-created file.
+  let protectedPaths = 0
   for (const relativePath of uniquePaths) {
     resolveManagedPath(snapshotRoot, relativePath)
     resolveManagedPath(destinationRoot, relativePath)
     assertAgentWriteAllowed(destinationRoot, relativePath)
+    if (++protectedPaths % 32 === 0) await new Promise<void>(resolve => setImmediate(resolve))
   }
   if (manifest) await validateSnapshotFiles(snapshotRoot, manifest.files, manifest.hashes)
   const originals = manifest ? new Set(manifest.files.map((file) => file.replaceAll('\\', '/'))) : new Set<string>()

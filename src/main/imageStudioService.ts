@@ -1,6 +1,9 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { diagnosticJournal, redactDiagnosticText } from './diagnosticLog'
+import { diagnosticValue } from './diagnosticContext'
+import { readDiagnosticResponse } from './networkDiagnostics'
 import { safeStorage } from 'electron'
 import sharp from 'sharp'
 import { downloadActivities } from './downloadActivityService'
@@ -144,7 +147,11 @@ function clampQuality(value: unknown): ImageStudioQuality {
 function clampModeration(value: unknown): ImageStudioModeration { return value === 'low' ? 'low' : 'auto' }
 
 async function imageApiError(response: Response, apiKey: string): Promise<string> {
-  const raw = await response.text().catch(() => '')
+  const raw = await readDiagnosticResponse(response).catch(() => '')
+  diagnosticJournal.record({ subsystem: 'image-studio', operation: 'http-response', phase: 'error', level: 'error', message: `Image API returned HTTP ${response.status}`, data: {
+    status: response.status, requestId: response.headers.get('x-request-id') ?? response.headers.get('request-id'),
+    responseBody: redactDiagnosticText(apiKey ? raw.replaceAll(apiKey, '[REDACTED]') : raw)
+  } })
   let payload: unknown
   try { payload = JSON.parse(raw) } catch { payload = raw }
   const root = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
@@ -348,6 +355,10 @@ export class ImageStudioService {
     let requestBody: BodyInit = JSON.stringify(body)
     const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` }
     const endpoint = references.length ? 'images/edits' : 'images/generations'
+    const requestId = randomUUID()
+    diagnosticJournal.record({ subsystem: 'image-studio', operation: 'request', phase: 'start', message: 'Image generation request prepared', data: {
+      requestId, model, endpoint: apiEndpoint(baseUrl, endpoint), hosted, input: diagnosticValue(request), referenceCount: references.length
+    } })
     if (references.length) {
       const form = new FormData()
       form.append('model', body.model)
@@ -379,6 +390,7 @@ export class ImageStudioService {
       }
     }
     const jobId = lease?.jobId ?? randomUUID()
+    diagnosticJournal.record({ subsystem: 'image-studio', operation: 'request', phase: 'delivered', message: 'Image generation response decoded', data: { requestId, providerRequestId: response.headers.get('x-request-id'), jobId, model, hosted, reservedCredits: lease?.reservedCredits, imageCount: processed.length, assets: processed.map(item => diagnosticValue(item)) } })
     const createdAt = new Date().toISOString()
     const assets: ImageHistoryItem[] = processed.map((item) => ({ id: randomUUID(), createdAt, model, style: request.style, size: body.size, quality: body.quality, hosted, credits: hosted ? (lease?.reservedCredits ?? count) : 0 }))
     const write = this.historyWrite.then(async () => {

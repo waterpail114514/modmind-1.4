@@ -1,3 +1,14 @@
+import BackgroundGamePanel from './components/BackgroundGamePanel'
+import DiagnosticOptions from './components/DiagnosticOptions'
+import { recordUiContentDiagnostic, recordUiDiagnostic } from './lib/diagnosticUi'
+import type { DiagnosticExportOptions } from '../../shared/diagnostics'
+import './components/diagnostic-options.css'
+import { imageWorkflowDiagnosticState } from './lib/imageWorkflowStorage'
+import { reduceInspirationText } from './inspirationText'
+import AgentReasoning from './components/AgentReasoning'
+import AgentMessage from './components/AgentMessage'
+import AgentActivityList from './components/AgentActivityList'
+import { inspirationActivityRows, upsertInspirationActivity, settleInspirationActivities } from './inspirationActivity'
 import ContextUsage from './components/ContextUsage'
 import { latestContextUsage, mergeContextUsage } from '../../shared/contextUsage'
 import { normalizeAgentApprovalMode } from '../../shared/agentApproval'
@@ -15,6 +26,11 @@ import { useAiAttachments } from './useAiAttachments'
 import { readWorkbenchFeatureSelection, type WorkbenchFeatures } from '../../shared/workbenchFeatures'
 import { reportClientFailure } from './lib/clientFailure'
 import { useAppLoading, waitForAppLoadingCover } from './useAppLoading'
+import { BudgetedCache, RebuildableStateCache } from './lib/budgetedCache'
+import { readConversationHistory, readWorkbenchHistoryWindow } from './conversationHistory'
+import { joinHistorySegments, type HistorySegment } from './historyWindow'
+import { trimInspirationHistories } from './inspirationHistoryCache'
+import SnapshotList from './components/SnapshotList'
 import { editorLanguage } from './lib/editorLanguage'
 import { SecretInput } from './components/SecretInput'
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
@@ -36,6 +52,7 @@ import { useSidebarLayout } from './useSidebarLayout'
 import { resolveSidebarGroups, moveSidebarEntry, moveSidebarCategory } from './sidebarLayout'
 import { buildNavigationDefinitions } from './navigationDefinitions'
 import AppMaintenanceSettings from './components/AppMaintenanceSettings'
+import ContributionSettings from './components/ContributionSettings'
 import AppChangelogDialog from './components/AppChangelogDialog'
 import type { AppChangelogSnapshot } from '../../shared/appChangelog'
 import AboutAuthors from './components/AboutAuthors'
@@ -64,6 +81,7 @@ import {
   ChevronRight,
   CircleAlert,
   Clock3,
+  CloudDownload,
   CloudUpload,
   Code2,
   Copy,
@@ -81,7 +99,7 @@ import {
   Info,
   LoaderCircle,
   RefreshCw,
-  LibraryBig,
+  GitCompareArrows,
   ListChecks,
   Minus,
   MoreHorizontal,
@@ -108,6 +126,7 @@ import {
   Zap
 } from 'lucide-react'
 import type {
+  ModMindApi,
   AiPlan,
   AiAttachment,
   AiOutputEvent,
@@ -199,6 +218,7 @@ import {
   isLegacyWorkbenchConversation,
   migrateLegacyConversation,
   normalizeWorkbenchConversations,
+  mergeWorkbenchConversationIndexes,
   removeWorkbenchConversation,
   sortWorkbenchConversations,
   touchWorkbenchConversation,
@@ -210,7 +230,8 @@ import {
 } from './workbenchConversations'
 import { inspirationConversationTitle, normalizeStoredInspirationMessages, persistInspirationHistory, sortInspirationConversations, type InspirationConversation } from './inspirationStorage'
 import { isAiOperationalStatusText } from '../../shared/aiOutput'
-import { buildInspirationRows, deleteInspirationTimelineItem, finalInspirationReply, inspirationConversationHandoff, inspirationStepStatus, upsertInspirationNotice, replayInspirationEventsAsync, rewindInspirationTimelineTo, settleInspirationCancellation, settleInspirationFailure, settleInspirationReply, shouldResumeInspirationSession } from './inspirationOutput'
+import { applyInspirationArtifact, buildInspirationRows, upsertInspirationReasoning, settleInspirationReasoning, deleteInspirationTimelineItem, finalInspirationReply, inspirationConversationHandoff, inspirationStepStatus, upsertInspirationNotice, upsertInspirationProgress, replayInspirationEventsAsync, rewindInspirationTimelineTo, settleInspirationCancellation, settleInspirationFailure, settleInspirationReply, shouldResumeInspirationSession } from './inspirationOutput'
+import { settleInspirationProgress } from './inspirationProgress'
 import appLogo from './assets/logo-wordmark.svg'
 import appLogoDark from './assets/logo-wordmark-dark.svg'
 
@@ -266,23 +287,7 @@ function readSidebarDragPayload(dataTransfer: DataTransfer): SidebarDragPayload 
   }
 }
 
-function InspirationStepGroup({ items }: { items: InspirationChatMessage[] }): React.JSX.Element {
-  const [expanded, setExpanded] = useState(false)
-  useEffect(() => { if (items.some((item) => item.status === 'streaming')) setExpanded(true) }, [items])
-  return <section className="agent-tool-group">
-    <button type="button" className="agent-disclosure-header" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
-      <span className="agent-disclosure-icon">{items.some((item) => item.status === 'streaming') ? <LoaderCircle className="spin" size={12} /> : <ListChecks size={14} />}</span>
-      <span>查看步骤{items.length ? ` · ${items.length}` : ''}</span>
-      <ChevronRight className={expanded ? 'expanded' : ''} size={12} />
-    </button>
-    {expanded ? <PagedSteps items={items} renderItem={(item) => (
-      <div className={`agent-tool-row${item.notice ? ' ai-notice-row' : ''}`} key={item.id || `${item.time || ''}-${item.content}`}>
-        <span className={`agent-tool-dot ${item.status === 'error' ? 'error' : item.status === 'warning' || item.status === 'cancelled' ? 'warning' : 'done'}`} />
-        <div><strong>{item.content.split('\n')[0] || '工具调用'}</strong>{item.content.includes('\n') ? <span>{item.content.split('\n').slice(1).join(' ')}</span> : null}<AiNoticeDetails notice={item.notice} /></div>
-      </div>
-    )} /> : null}
-  </section>
-}
+
 
 type AiTimelineItem = WorkbenchTimelineItem
 
@@ -367,6 +372,26 @@ function emptyProjectWorkbenchState(): ProjectWorkbenchState {
     aiRecovery: null, beginnerTaskState: 'idle', files: [], selectedFile: '', editorContent: '', editorDirty: false,
     buildResult: null, buildError: '', building: false, snapshots: [], exportArtifactAvailable: false, minecraftEvents: []
   }
+}
+
+function workbenchCacheBytes(state: ProjectWorkbenchState): number {
+  let bytes = (state.prompt.length + state.editorContent.length + state.buildError.length) * 2 + 4096
+  for (const item of state.aiTimeline) bytes += item.content.length * 2 + 512
+  for (const item of state.events) bytes += (item.title.length + item.detail.length) * 2 + 256
+  for (const item of state.conversations) bytes += item.title.length * 2 + 256
+  for (const item of state.snapshots) bytes += item.label.length * 2 + 128
+  return bytes + state.files.length * 512 + state.attachments.length * 2048
+}
+
+function preserveWorkbenchDraft(state: ProjectWorkbenchState): ProjectWorkbenchState | undefined {
+  if (!state.prompt && !state.attachments.length && !state.editorDirty && !state.planning && !state.building) return undefined
+  // Journals, file trees and backup lists are rebuildable; pending user work is not.
+  return { ...emptyProjectWorkbenchState(), prompt: state.prompt, attachments: state.attachments,
+    editorContent: state.editorDirty ? state.editorContent : '', editorDirty: state.editorDirty, selectedFile: state.selectedFile,
+    planning: state.planning, building: state.building, processingStartedAt: state.processingStartedAt,
+    runningBackend: state.runningBackend, switchingBackend: state.switchingBackend, workspaceSession: state.workspaceSession,
+    activeConversationId: state.activeConversationId, aiPlan: state.aiPlan, aiTodo: state.aiTodo,
+    aiOutputStatus: state.aiOutputStatus, aiRecovery: state.aiRecovery, beginnerTaskState: state.beginnerTaskState }
 }
 
 function normalizeStoredTimelineItem(item: AiTimelineItem): AiTimelineItem {
@@ -660,6 +685,7 @@ function ProjectLauncher({
   onImportModJar,
   onSelect,
   onRemove,
+  onDelete,
   onRename
 }: {
   projects: ProjectInfo[]
@@ -669,6 +695,7 @@ function ProjectLauncher({
   onImportModJar: () => void
   onSelect: (project: ProjectInfo) => void
   onRemove: (project: ProjectInfo) => void
+  onDelete: (project: ProjectInfo) => void
   onRename: (project: ProjectInfo) => void
 }): React.JSX.Element {
   const [menu, setMenu] = useState<{ project: ProjectInfo; x: number; y: number } | null>(null)
@@ -720,13 +747,13 @@ function ProjectLauncher({
           </div>
           <div className="recent-project-list">
             {filteredProjects.map((recent) => (
-              <div className="recent-project-row" key={recent.path} onContextMenu={(event) => { event.preventDefault(); setMenu({ project: recent, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 92) }) }}>
+              <div className="recent-project-row" key={recent.path} onContextMenu={(event) => { event.preventDefault(); setMenu({ project: recent, x: Math.max(0, Math.min(event.clientX, window.innerWidth - 230)), y: Math.max(0, Math.min(event.clientY, window.innerHeight - 132)) }) }}>
                 <button className="recent-project-main" type="button" onClick={() => onSelect(recent)}>
                   <span className="project-launcher-icon project"><Box size={18} /></span>
                   <span><strong>{recent.name}</strong><small title={recent.path}>{recent.path}</small></span>
                   <span className="recent-project-meta">{platformLabel(recent.loader)} · {recent.minecraftVersion}</span>
                 </button>
-                <button className="recent-project-remove" type="button" title="删除项目" aria-label={`删除项目 ${recent.name}`} onClick={() => onRemove(recent)}><X size={15} /></button>
+                <button className="recent-project-remove" type="button" title="移除关联（保留所有文件）" aria-label={`移除关联 ${recent.name}（保留所有文件）`} onClick={() => onRemove(recent)}><X size={15} /></button>
               </div>
             ))}
             {!filteredProjects.length ? <div className="recent-project-empty"><FolderOpen size={24} strokeWidth={1.4} aria-hidden="true" /><strong>{projects.length ? '没有找到匹配的项目' : '你的项目会出现在这里'}</strong><p>{projects.length ? '试试其他名称、路径或 Minecraft 版本。' : '新建一个项目，或打开已有作品，继续你的创作。'}</p></div> : null}
@@ -734,7 +761,8 @@ function ProjectLauncher({
         </section>
       {menu ? <div className="project-context-menu" role="menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(event) => event.stopPropagation()}>
         <button type="button" role="menuitem" onClick={() => { onRename(menu.project); setMenu(null) }}><Pencil size={14} />重命名项目</button>
-        <button type="button" role="menuitem" onClick={() => { onRemove(menu.project); setMenu(null) }}><X size={14} />删除项目</button>
+        <button type="button" role="menuitem" onClick={() => { onRemove(menu.project); setMenu(null) }}><X size={14} />移除关联（保留文件）</button>
+        <button type="button" role="menuitem" className="danger" onClick={() => { onDelete(menu.project); setMenu(null) }}><Trash2 size={14} />删除项目文件</button>
       </div> : null}
     </main>
   )
@@ -1016,12 +1044,12 @@ function ProjectInspectionDialog({ kind, progress, error, onClose, onRetry }: {
 
 /** 回退/编辑重发时只保留「用户提问 + AI 最终回答」，清掉工具步骤、进行中/中断残留等半处理中间态。 */
 function isFinalInspirationMessage(message: InspirationChatMessage): boolean {
-  return message.role === 'user' || (message.role === 'assistant' && message.kind !== 'tool' && message.status === 'completed')
+  return message.role === 'user' || (message.role === 'assistant' && !message.kind && message.phase !== 'commentary' && message.isFinal !== false && message.status === 'completed')
 }
 
 function dedupeInspirationMessages(messages: InspirationChatMessage[]): InspirationChatMessage[] {
   return messages.reduce<InspirationChatMessage[]>((result, message) => {
-    if (message.role !== 'assistant' || message.kind === 'tool') {
+    if (message.phase === 'commentary' || message.itemId || message.streamId || message.role !== 'assistant' || message.kind) {
       result.push(message)
       return result
     }
@@ -1030,7 +1058,7 @@ function dedupeInspirationMessages(messages: InspirationChatMessage[]): Inspirat
     for (let index = result.length - 1; index >= 0; index -= 1) {
       const candidate = result[index]
       if (candidate.role === 'user') break
-      if (candidate.role === 'assistant' && candidate.kind !== 'tool') {
+      if (candidate.role === 'assistant' && !candidate.kind) {
         targetIndex = index
         break
       }
@@ -1055,6 +1083,16 @@ function dedupeInspirationMessages(messages: InspirationChatMessage[]): Inspirat
   }, [])
 }
 
+function ensureConversationProjection(...args: Parameters<ModMindApi['conversations']['create']>): ReturnType<ModMindApi['conversations']['create']> {
+  const api = window.modmind.conversations
+  return (api.ensureProjection ?? api.create)(...args)
+}
+
+function saveConversationProjection(...args: Parameters<ModMindApi['conversations']['saveView']>): ReturnType<ModMindApi['conversations']['saveView']> {
+  const api = window.modmind.conversations
+  return (api.saveProjection ?? api.saveView)(...args)
+}
+
 export function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBackend, aiDefaults, externalAgents, defaultModels = [], onBusyChange, onConnectionRequired, onSendToCoding }: {
   project: ProjectInfo
   visible: boolean
@@ -1077,9 +1115,15 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
   const [hydrated, setHydrated] = useState(false)
   const [historyLoadError, setHistoryLoadError] = useState('')
   const [historyLoadRetry, setHistoryLoadRetry] = useState(0)
+  const historyCancelRef = useRef<() => void>(() => {})
+  const durableMessagesRef = useRef(new WeakSet<InspirationChatMessage[]>())
+  const savingMessagesRef = useRef(new WeakSet<InspirationChatMessage[]>())
+  const loadedInspirationIndexRef = useRef('')
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<AiAttachment[]>([])
   const [busy, setBusy] = useState(false)
+  const inspirationCacheScopeRef = useRef({ visible, busy, activeConversationId })
+  inspirationCacheScopeRef.current = { visible, busy, activeConversationId }
   const [aiOverride, setAiOverride] = useSurfaceAiSelection(`inspiration:${project.path}`)
   const defaultBackend = uiMode === 'beginner' ? 'quota' : codingBackend
   const activeAiOverride = aiOverride?.backend === defaultBackend ? aiOverride : undefined
@@ -1146,7 +1190,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
   const inspirationUsage = useMemo(() => latestContextUsage(messages, aiSelection), [messages, aiSelection.model, aiSelection.backend])
   const inspirationRows = useMemo(() => buildInspirationRows(messages), [messages])
   const visibleInspirationRows = inspirationRows
-  const latestInspirationMessageIndex = useMemo(() => { for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === 'user' || messages[i].kind !== 'tool') return i; return -1 }, [messages])
+  const latestInspirationMessageIndex = useMemo(() => { for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === 'user' || !messages[i].kind) return i; return -1 }, [messages])
 
   useEffect(() => {
     activeInspirationConversationIdRef.current = activeConversationId
@@ -1254,7 +1298,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
     if (!remaining.length) {
       // Keep an authoritative empty conversation before deleting the last one,
       // so a crash cannot re-import stale browser history on the next launch.
-      const blank = await window.modmind.conversations.create(project.path, { surface: 'inspiration', title: '新想法 1', view: { messages: [] } })
+      const blank = await ensureConversationProjection(project.path, { surface: 'inspiration', title: '新想法 1', view: { messages: [] } })
       blankId = blank.id
       conversationGenerationRef.current.set(blank.id, blank.generation)
       remaining.push({ id: blank.id, title: blank.title, updatedAt: blank.updatedAt, messages: [] })
@@ -1291,7 +1335,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
     const title = await promptConversationName({ title: '重命名对话', inputLabel: '对话名称', value: selected.title, confirmLabel: '保存名称' })
     if (title === null) return
     try {
-      const document = await window.modmind.conversations.create(project.path, { id: conversationId, surface: 'inspiration', title: selected.title, view: { messages: selected.messages } })
+      const document = await ensureConversationProjection(project.path, { id: conversationId, surface: 'inspiration', title: selected.title, view: { messages: selected.messages } })
       conversationGenerationRef.current.set(conversationId, document.generation)
       const renamed = await window.modmind.conversations.rename(project.path, conversationId, title)
       setConversations(current => current.map(entry => entry.id === conversationId ? { ...entry, title: renamed.title, titleSource: 'manual' } : entry))
@@ -1302,26 +1346,45 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
     const selected = conversations.find(entry => entry.id === conversationId)
     if (!selected) return
     try {
-      await window.modmind.conversations.create(project.path, { id: conversationId, surface: 'inspiration', title: selected.title, view: { messages: selected.messages } })
+      await ensureConversationProjection(project.path, { id: conversationId, surface: 'inspiration', title: selected.title, view: { messages: selected.messages } })
       const updated = await window.modmind.conversations.pin(project.path, conversationId, !selected.pinned)
       setConversations(current => sortInspirationConversations(current.map(entry => entry.id === conversationId ? { ...entry, pinned: updated.pinned } : entry)))
     } catch (error) { setPersistenceWarning(`置顶状态保存失败：${errorMessage(error)}`) }
   }
 
   useEffect(() => {
+    return window.modmind.ai.onProgress((event) => {
+      if (event.projectPath && normalizeProjectPath(event.projectPath) !== normalizeProjectPath(project.path)) return
+      if (event.sessionId !== inspirationSessionRef.current || event.sessionId === ignoredInspirationSessionRef.current) return
+      if (event.conversationId && event.conversationId !== activeInspirationConversationIdRef.current) return
+      const expectedGeneration = conversationGenerationRef.current.get(activeInspirationConversationIdRef.current)
+      if (event.generation !== undefined && expectedGeneration !== undefined && event.generation !== expectedGeneration) return
+      updateConversationMessages(inspirationConversationRef.current, current => upsertInspirationProgress(current, event))
+    })
+  }, [project.path])
+
+  useEffect(() => {
     return window.modmind.ai.onOutput((event) => {
       if (event.projectPath && normalizeProjectPath(event.projectPath) !== normalizeProjectPath(project.path)) return
-      if (event.sessionId !== inspirationSessionRef.current || (event.kind !== 'delta' && event.kind !== 'usage' && !event.content.trim())) return
+      if (event.sessionId !== inspirationSessionRef.current || (event.kind !== 'delta' && event.kind !== 'usage' && event.kind !== 'reasoning' && !event.inspirationArtifact && !event.content.trim())) return
       const expectedGeneration = conversationGenerationRef.current.get(activeInspirationConversationIdRef.current)
       if (event.generation !== undefined && expectedGeneration !== undefined && event.generation !== expectedGeneration) return
       if (event.sessionId === ignoredInspirationSessionRef.current) return
       const conversationId = inspirationConversationRef.current
       const sessionId = event.sessionId
+      if (event.kind !== 'usage' && event.kind !== 'reasoning') updateConversationMessages(conversationId, current => settleInspirationProgress(current, sessionId))
       if (event.usage) updateConversationMessages(conversationId, current => {
-        const reverseIndex = [...current].reverse().findIndex(message => message.sessionId === sessionId && message.role === 'assistant')
+        const reverseIndex = [...current].reverse().findIndex(message => message.sessionId === sessionId && message.role === 'assistant' && !message.kind)
         const index = reverseIndex < 0 ? -1 : current.length - 1 - reverseIndex
         return current.map((message, i) => i === index ? { ...message, usage: mergeContextUsage(latestContextUsage(current), event.usage) } : message)
       })
+      if (event.kind === 'reasoning') { updateConversationMessages(conversationId, current => upsertInspirationReasoning(current, event)); return }
+      if (event.inspirationArtifact) {
+        updateConversationMessages(conversationId, current => applyInspirationArtifact(current, event))
+        return
+      }
+      if (event.activity) { updateConversationMessages(conversationId, current => upsertInspirationActivity(current, event)); return }
+      if (event.kind === 'answer' || event.terminal) updateConversationMessages(conversationId, current => settleInspirationActivities(current, sessionId))
       if (event.kind === 'usage') return
       if (event.notice && event.terminal !== true && (event.kind === 'warning' || event.kind === 'retry')) {
         updateConversationMessages(conversationId, current => upsertInspirationNotice(current, event))
@@ -1342,68 +1405,36 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
         const previous = items.at(-1)
         return previous?.kind === 'tool' && previous.content.trim() === item.content.trim() ? items : [...items, item]
       }
-      const demoteResponseAndAppendStep = (content: string, status: 'completed' | 'warning' | 'error' = 'completed'): void => {
+      const appendLifecycleStep = (content: string, status: 'completed' | 'warning' | 'error' = 'completed'): void => {
         updateConversationMessages(conversationId, (current) => {
-          const reverseIndex = [...current].reverse().findIndex((message) => message.role === 'assistant' && message.status === 'streaming' && message.sessionId === sessionId)
+          const reverseIndex = [...current].reverse().findIndex((message) => message.role === 'assistant' && !message.kind && message.status === 'streaming' && message.sessionId === sessionId)
           if (reverseIndex < 0) return appendUniqueStep(current, step(content, status))
           const target = current.length - 1 - reverseIndex
           const streaming = current[target]
           let before = current.slice(0, target)
-          if (streaming.content.trim() && !isInspirationProtocol(streaming.content)) before = appendUniqueStep(before, step(streaming.content))
+          if (streaming.content.trim() && !isInspirationProtocol(streaming.content)) before = [...before, { ...streaming, id: `${streaming.id}:progress:${event.eventId ?? event.sequence ?? current.length}`, phase: 'commentary', status: 'completed', isFinal: false, inspirationArtifact: undefined, promptEdit: undefined }]
           before = appendUniqueStep(before, step(content, status))
           return [...before, { ...streaming, content: '' }, ...current.slice(target + 1)]
         })
       }
-      if (event.kind === 'answer') {
-        if (!event.content.trim()) {
-          demoteResponseAndAppendStep(event.content, 'error')
+      if (event.kind === 'delta' || event.kind === 'response' || event.kind === 'answer') {
+        if (event.kind === 'answer' && !event.content.trim()) {
+          updateConversationMessages(conversationId, current => settleInspirationFailure(current, sessionId, '本轮未返回完整回答，请重试'))
           return
         }
-        finalAnswerSessionRef.current = sessionId
-        updateConversationMessages(conversationId, (current) => {
-          if (current.some((message) => message.role === 'assistant' && message.sessionId === sessionId && message.isFinal && message.content.trim() === event.content.trim())) return current
-          const reverseIndex = [...current].reverse().findIndex((message) => message.role === 'assistant' && message.status === 'streaming' && message.sessionId === sessionId)
-          const completed: InspirationChatMessage = { role: 'assistant', inspirationFeatures: event.inspirationFeatures ?? current.find(m => m.sessionId === sessionId && m.role === 'assistant')?.inspirationFeatures, generation: event.generation, id: `turn-${sessionId}:assistant`, turnId: event.turnId ?? `turn-${sessionId}`, sequence: event.sequence, content: event.content, status: 'completed', isFinal: true, sessionId, time: event.time, usage: mergeContextUsage(latestContextUsage(current), event.usage) }
-          if (reverseIndex < 0) return [...current, completed]
-          const target = current.length - 1 - reverseIndex
-          return current.map((message, index) => index === target ? completed : message)
-        })
-        return
-      }
-      if (event.kind === 'response') {
-        if (isAiOperationalStatusText(event.content)) {
-          demoteResponseAndAppendStep(event.content)
-          return
-        }
-        updateConversationMessages(conversationId, (current) => {
-          const reverseIndex = [...current].reverse().findIndex((message) => message.role === 'assistant' && message.status === 'streaming' && message.sessionId === sessionId)
-          if (reverseIndex < 0) return current
-          const target = current.length - 1 - reverseIndex
-          const streaming = current[target]
-          if (streaming.content === event.content) return current
-          let before = current.slice(0, target)
-          if (streaming.content.trim() && !isInspirationProtocol(streaming.content)) before = appendUniqueStep(before, step(streaming.content))
-          return [...before, { ...streaming, content: event.content, sequence: event.sequence }, ...current.slice(target + 1)]
-        })
-        return
-      }
-      if (event.kind === 'delta') {
-        updateConversationMessages(conversationId, (current) => current.map((message) => {
-          if (message.role !== 'assistant' || message.status !== 'streaming' || message.sessionId !== sessionId) return message
-          const content = !message.content || event.content.startsWith(message.content)
-            ? event.content
-            : message.content.endsWith(event.content) ? message.content : `${message.content}${event.content}`
-          return { ...message, content, sequence: event.sequence }
-        }))
+        if (event.kind === 'answer') finalAnswerSessionRef.current = sessionId
+        updateConversationMessages(conversationId, current => reduceInspirationText(event.kind === 'answer' ? settleInspirationReasoning(current, sessionId) : current, event))
         return
       }
       if (event.kind === 'retry' || event.kind === 'tool' || event.kind === 'warning' || event.kind === 'error' || event.kind === 'start') {
-        demoteResponseAndAppendStep(event.content, inspirationStepStatus(event))
+        appendLifecycleStep(event.content, inspirationStepStatus(event))
       }
     })
   }, [project.path])
 
   useEffect(() => {
+    const indexKey = `${storageKey}\n${historyLoadRetry}`
+    if (!visible || loadedInspirationIndexRef.current === indexKey) return
     setPendingEditTarget(null)
     sessionResetConversationIdsRef.current.clear()
     conversationGenerationRef.current.clear()
@@ -1412,6 +1443,8 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
     setConversations([])
     setActiveConversationId('')
     let cancelled = false
+    const cancel = (): void => { cancelled = true; setHistoryLoadError('已暂停读取对话，可重试或切换对话') }
+    historyCancelRef.current = cancel
     const load = async (): Promise<void> => {
       try {
         const summaries = await window.modmind.conversations.list(project.path, 'inspiration')
@@ -1421,6 +1454,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
           // separately instead of transferring every conversation over IPC.
           setConversations(summaries.map(summary => ({ id: summary.id, title: summary.title, updatedAt: summary.updatedAt, pinned: summary.pinned, titleSource: summary.titleSource, messages: [], messagesLoaded: false })))
           setActiveConversationId(summaries[0].id)
+          loadedInspirationIndexRef.current = indexKey
           return
         }
         const saved = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as { activeId?: string; conversations?: InspirationConversation[] } | null
@@ -1430,30 +1464,36 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
         const fallback: InspirationConversation = { id: `idea-${Date.now()}`, title: '新想法 1', updatedAt: new Date().toISOString(), messages: [] }
         const list = valid.length ? valid : [fallback]
         for (const entry of list) {
-          const document = await window.modmind.conversations.create(project.path, { id: entry.id, surface: 'inspiration', title: entry.title, view: { messages: entry.messages } })
+          if (cancelled) return
+          const document = await ensureConversationProjection(project.path, { id: entry.id, surface: 'inspiration', title: entry.title, view: { messages: entry.messages } })
+          if (cancelled) return
           conversationGenerationRef.current.set(entry.id, document.generation)
+          durableMessagesRef.current.add(entry.messages)
         }
         const active = list.find((entry) => entry.id === saved?.activeId) ?? list[0]
-        if (!cancelled) { setConversations(list); setActiveConversationId(active.id); setHydrated(true) }
+        if (!cancelled) { loadedInspirationIndexRef.current = indexKey; setConversations(list); setActiveConversationId(active.id); setHydrated(true) }
       } catch (error) {
         if (!cancelled) setHistoryLoadError(`对话列表读取失败：${errorMessage(error)}`)
       }
     }
     void load()
-    return () => { cancelled = true }
-  }, [storageKey, historyLoadRetry])
+    return () => { cancelled = true; if (historyCancelRef.current === cancel) historyCancelRef.current = () => {} }
+  }, [storageKey, historyLoadRetry, visible])
 
   useEffect(() => {
-    if (!activeConversationId || activeInspirationConversation?.messagesLoaded !== false) return
+    if (!visible || !activeConversationId || activeInspirationConversation?.messagesLoaded !== false) return
     let cancelled = false
     setHydrated(false)
     setHistoryLoadError('')
-    void window.modmind.conversations.read(project.path, activeConversationId).then(async document => {
+    const cancel = (): void => { cancelled = true; setHistoryLoadError('已暂停读取对话，可重试或切换对话') }
+    historyCancelRef.current = cancel
+    void readConversationHistory(window.modmind.conversations, project.path, activeConversationId, () => cancelled).then(async document => {
       if (cancelled) return
       if (!document) throw new Error('历史对话不存在')
       const view = dedupeInspirationMessages(normalizeStoredInspirationMessages(document.view.messages ?? []))
       const messages = await replayInspirationEventsAsync(view, document.events, () => cancelled)
       if (cancelled) return
+      durableMessagesRef.current.add(messages)
       conversationGenerationRef.current.set(document.id, document.generation)
       if (document.generation > 0 && !Object.keys(document.native).length) sessionResetConversationIdsRef.current.add(document.id)
       setConversations(current => current.map(entry => entry.id === document.id ? {
@@ -1463,8 +1503,34 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
     }).catch(error => {
       if (!cancelled) setHistoryLoadError(`对话读取失败：${errorMessage(error)}`)
     })
-    return () => { cancelled = true }
-  }, [activeConversationId, activeInspirationConversation?.messagesLoaded, project.path, historyLoadRetry])
+    return () => { cancelled = true; if (historyCancelRef.current === cancel) historyCancelRef.current = () => {} }
+  }, [activeConversationId, activeInspirationConversation?.messagesLoaded, project.path, historyLoadRetry, visible])
+
+  useEffect(() => {
+    const protectedIds = new Set<string>()
+    if (visible) protectedIds.add(activeConversationId)
+    if (busy) protectedIds.add(inspirationConversationRef.current)
+    setConversations(current => trimInspirationHistories(current, protectedIds, durableMessagesRef.current, visible ? 16 * 1024 * 1024 : 0, visible ? 3 : 0))
+  }, [conversations, activeConversationId, busy, visible])
+
+  // A fast switch must not cancel the only save of a completed inactive reply.
+  // Eviction still waits for confirmation from the durable store.
+  useEffect(() => {
+    for (const entry of conversations) {
+      if (entry.messagesLoaded === false || visible && entry.id === activeConversationId || busy && entry.id === inspirationConversationRef.current) continue
+      const generation = conversationGenerationRef.current.get(entry.id)
+      if (generation === undefined || durableMessagesRef.current.has(entry.messages) || savingMessagesRef.current.has(entry.messages)) continue
+      savingMessagesRef.current.add(entry.messages)
+      void saveConversationProjection(project.path, entry.id, generation, { messages: entry.messages }, entry.title).then(() => {
+        durableMessagesRef.current.add(entry.messages)
+        const scope = inspirationCacheScopeRef.current
+        const protectedIds = new Set(scope.visible ? [scope.activeConversationId] : [])
+        if (scope.busy) protectedIds.add(inspirationConversationRef.current)
+        setConversations(current => trimInspirationHistories(current, protectedIds, durableMessagesRef.current, scope.visible ? 16 * 1024 * 1024 : 0, scope.visible ? 3 : 0))
+      }).catch(error => setPersistenceWarning(`对话暂未保存，已保留在内存中：${errorMessage(error)}`))
+        .finally(() => savingMessagesRef.current.delete(entry.messages))
+    }
+  }, [conversations, activeConversationId, busy, visible, project.path])
 
   useEffect(() => {
     if (!hydrated || !activeConversationId) return
@@ -1476,16 +1542,24 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
   }, [conversations, activeConversationId, hydrated, storageKey])
 
   useEffect(() => {
-    if (!hydrated || !activeConversationId) return
+    if (!hydrated || !activeConversationId || busy) return
     const generation = conversationGenerationRef.current.get(activeConversationId)
     if (generation === undefined) return
     const timer = window.setTimeout(() => {
       const current = conversations.find((entry) => entry.id === activeConversationId)
       if (!current || current.messagesLoaded === false || conversationGenerationRef.current.get(activeConversationId) !== generation) return
-      void window.modmind.conversations.saveView(project.path, activeConversationId, generation, { messages: current.messages }, current.title).catch(() => undefined)
-    }, 250)
+      if (durableMessagesRef.current.has(current.messages) || savingMessagesRef.current.has(current.messages)) return
+      savingMessagesRef.current.add(current.messages)
+      void saveConversationProjection(project.path, activeConversationId, generation, { messages: current.messages }, current.title).then(() => {
+        durableMessagesRef.current.add(current.messages)
+        const scope = inspirationCacheScopeRef.current
+        const protectedIds = new Set(scope.visible ? [scope.activeConversationId] : [])
+        if (scope.busy) protectedIds.add(inspirationConversationRef.current)
+        setConversations(entries => trimInspirationHistories(entries, protectedIds, durableMessagesRef.current, scope.visible ? 16 * 1024 * 1024 : 0, scope.visible ? 3 : 0))
+      }).catch(() => undefined).finally(() => savingMessagesRef.current.delete(current.messages))
+    }, 1000)
     return () => window.clearTimeout(timer)
-  }, [conversations, activeConversationId, hydrated, project.path])
+  }, [conversations, activeConversationId, hydrated, project.path, busy, visible])
 
   useEffect(() => {
     if (!busy || thinkingStartedAtRef.current === null) return
@@ -1570,10 +1644,10 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
       let conversationGeneration: number | undefined
       try {
         const conversationTitle = inspirationConversationTitle(conversations.find((entry) => entry.id === conversationId)?.title, pendingMessages)
-        const conversationDocument = await window.modmind.conversations.create(project.path, { id: conversationId, surface: 'inspiration', title: conversationTitle, view: { messages: pendingMessages } })
+        const conversationDocument = await ensureConversationProjection(project.path, { id: conversationId, surface: 'inspiration', title: conversationTitle, view: { messages: pendingMessages } })
         conversationGeneration = conversationDocument.generation
         conversationGenerationRef.current.set(conversationId, conversationGeneration)
-        await window.modmind.conversations.saveView(project.path, conversationId, conversationGeneration, { messages: pendingMessages }, conversationTitle)
+        await saveConversationProjection(project.path, conversationId, conversationGeneration, { messages: pendingMessages }, conversationTitle)
       } catch (error) {
         setPersistenceWarning(`统一对话存储暂不可用，将保留本地兼容历史：${errorMessage(error)}`)
       }
@@ -1684,15 +1758,19 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
       <div className="inspiration-layout">
         <section className="inspiration-chat">
           {historyLoadError ? <div className="inspiration-persistence-warning" style={{ marginTop: 12, flexShrink: 0, flexWrap: 'wrap' }} role="alert">{historyLoadError}<button type="button" onClick={() => setHistoryLoadRetry(value => value + 1)}>重新加载</button></div> : null}
-          {visibleInspirationRows.length ? <ConversationTimeline key={`${project.path}:${activeConversationId}`} surface="inspiration" projectPath={project.path} rows={visibleInspirationRows} isUserRow={row => row.kind === 'message' && row.message.role === 'user'} footer={busy ? <div className="inspiration-thinking-status" role="status"><span>灵感台思考中</span><time>{thinkingSeconds}s</time></div> : null} renderRow={(row) => {
-              if (row.kind === 'tool-group') return <InspirationStepGroup items={row.items} key={row.id} />
+          {!hydrated && !historyLoadError ? <div className="inspiration-persistence-warning" role="status">正在读取对话<button type="button" onClick={() => historyCancelRef.current()}>取消</button></div> : null}
+          {visibleInspirationRows.length ? <ConversationTimeline key={`${project.path}:${activeConversationId}`} surface="inspiration" projectPath={project.path} rows={visibleInspirationRows} isUserRow={row => row.kind === 'message' && row.message.role === 'user'} footer={busy ? <div className="inspiration-thinking-status" role="status"><span>灵感台处理中</span><time>{thinkingSeconds}s</time></div> : null} renderRow={(row) => {
+              if (row.kind === 'tool-group') return <AgentActivityList items={inspirationActivityRows(row.items)} key={row.id} />
+              if (row.kind === 'reasoning') return <AgentReasoning reasoning={row.message.reasoning} running={busy && row.message.status === 'streaming'} expandWhileRunning />
               const { message } = row
               const retryPrompt = message.role === 'assistant' && (message.status === 'error' || message.status === 'cancelled' || message.status === 'warning')
                 ? messages.slice(0, row.index).reverse().find((candidate) => candidate.role === 'user')?.content.replace(/\n\n已附 \d+ 个文件$/, '')
                 : undefined
-              return <div className={`inspiration-message ${message.role} ${message.status === 'error' ? 'error' : ''}`} key={row.id}>
-                <span>{message.role === 'assistant' ? <Bot size={16} /> : <UserRound size={16} />}</span>
-                <div><strong>{message.role === 'assistant' ? '灵感台' : '你'}</strong>{message.role === 'assistant' ? <><InspirationWorkflowReply
+              return <AgentMessage key={row.id} role={message.role} content={message.content} time={message.time}
+                onEdit={!busy && message.role === 'user' ? () => void editInspirationMessage(row.index, message.content) : undefined}
+                onDelete={!busy ? () => void deleteInspirationMessage(row.index) : undefined}
+                onRewind={!busy ? () => void rewindInspirationTo(row.index) : undefined}>
+                <InspirationWorkflowReply
                   message={message} features={features} projectPath={project.path} conversationId={activeConversationId}
                   generation={conversationGenerationRef.current.get(activeConversationId) ?? 0}
                   latest={row.index === latestInspirationMessageIndex} busy={busy}
@@ -1700,8 +1778,9 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
                   onSend={text => void send(text)} onHandoff={onSendToCoding} onSource={setEvidenceHref}
                   onCollect={content => setKnowledgeDialog({ content })}
                   onEdit={promptEdit => updateConversationMessages(activeConversationId, current => current.map((m, i) => i === row.index ? { ...m, promptEdit } : m))}
-                /><AiNoticeDetails notice={message.notice} />{message.isFinal && retryPrompt && !busy ? <button className="message-action" type="button" onClick={() => void send(retryPrompt)}><RotateCcw size={13} />重试</button> : null}</> : <p>{message.content}</p>}{!busy ? <div className="inspiration-message-actions">{message.role === 'user' ? <button type="button" title="编辑并重新发送" aria-label="编辑并重新发送" onClick={() => void editInspirationMessage(row.index, message.content)}><Pencil size={12} /></button> : null}<button type="button" title="删除这轮对话" aria-label="删除这轮对话" onClick={() => void deleteInspirationMessage(row.index)}><Trash2 size={12} /></button><button type="button" title={message.role === 'user' ? '从这条提问重新开始' : '保留此回答并截断后续对话'} aria-label={message.role === 'user' ? '从这条提问重新开始' : '保留此回答并截断后续对话'} onClick={() => void rewindInspirationTo(row.index)}><Undo2 size={12} /></button></div> : null}</div>
-              </div>
+                /><AiNoticeDetails notice={message.notice} />
+                {message.isFinal && retryPrompt && !busy ? <button className="message-action" type="button" onClick={() => void send(retryPrompt)}><RotateCcw size={13} />重试</button> : null}
+              </AgentMessage>
             }} /> : hydrated ? <ChatWelcome key={`${project.path}:${activeConversationId}`} mode="inspiration" modpack={project.kind === 'modpack'} serverPlugin={project.kind === 'server-plugin'} disabled={busy} onSelect={(prompt) => { setDraft(prompt); document.querySelector<HTMLTextAreaElement>('.inspiration-page:not([hidden]) textarea')?.focus() }} /> : <div className="inspiration-loading" role="status">正在载入对话…</div>}
           <div className="inspiration-compose-area">
           <div className="inspiration-research-shortcuts" aria-label="分析快捷入口">
@@ -1954,6 +2033,8 @@ export default function App(): React.JSX.Element {
   }, [appDialogRequest, resolveAppDialog])
   const [settingsInitialSection, setSettingsInitialSection] = useState('')
   const [view, setView] = useState<ViewId>(initialDetachedView ?? 'workspace')
+  const currentViewRef = useRef(view)
+  currentViewRef.current = view
   const [resourceImageTarget, setResourceImageTarget] = useState<import('../../shared/resourcePack').ResourceImageTarget | null>(null)
   const [resourceModelTarget, setResourceModelTarget] = useState<import('../../shared/modelSource').ResourceModelTarget | null>(null)
   const [resourceSelection, setResourceSelection] = useState<{ projectPath: string; id: string; file: string } | null>(null)
@@ -1985,18 +2066,15 @@ export default function App(): React.JSX.Element {
   bootstrappingRef.current = bootstrapping
   const [openingProject, setOpeningProject] = useState(false)
   const [projectTransitionPending, setProjectTransitionPending] = useState(false)
-  const [firstProjectPending, setFirstProjectPending] = useState(false)
   const projectTransitionRef = useRef(0)
   const setProject = (next: ProjectInfo | null): void => {
     const transition = ++projectTransitionRef.current
     if (next && !projectPathRef.current && !bootstrappingRef.current) {
-      setFirstProjectPending(true)
       setProjectState(next)
       setProjectTransitionPending(false)
       return
     }
     if (!next || normalizeProjectPath(next.path) === normalizeProjectPath(projectPathRef.current)) {
-      if (!next) setFirstProjectPending(false)
       setProjectState(next)
       setProjectTransitionPending(false)
       return
@@ -2008,19 +2086,12 @@ export default function App(): React.JSX.Element {
       setProjectTransitionPending(false)
     })
   }
-  const [filesLoadedProject, setFilesLoadedProject] = useState('')
-  const [historyLoadedProject, setHistoryLoadedProject] = useState('')
   const [quickTestProject, setQuickTestProject] = useState<ProjectInfo | null>(null)
   useEffect(() => { setQuickTestProject(null) }, [project?.path])
   const [recentProjects, setRecentProjects] = useState<ProjectInfo[]>([])
   const [projectLauncherOpen, setProjectLauncherOpen] = useState(() => !isDetachedWindow)
-  useAppLoading(bootstrapping || openingProject || projectTransitionPending || Boolean(project && !projectLauncherOpen
-    && (filesLoadedProject !== project.path || historyLoadedProject !== project.path)))
-  useEffect(() => {
-    if (firstProjectPending && project && filesLoadedProject === project.path && historyLoadedProject === project.path) {
-      setFirstProjectPending(false)
-    }
-  }, [firstProjectPending, project?.path, filesLoadedProject, historyLoadedProject])
+  // The cover protects the project transition, not background history/file reads.
+  useAppLoading(!appDialogRequest && (bootstrapping || openingProject || projectTransitionPending))
   const [minimalProjectMenuOpen, setMinimalProjectMenuOpen] = useState(false)
   const minimalProjectMenuRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -2087,14 +2158,14 @@ export default function App(): React.JSX.Element {
   const setAiTimeline = (value: SetStateAction<AiTimelineItem[]>): void => setWorkbenchValue('timeline', value)
   const setAiOutputStatus = (value: SetStateAction<WorkbenchUiState['outputStatus']>): void => setWorkbenchValue('outputStatus', value)
   const setAiRecovery = (value: SetStateAction<AiRecoveryInfo | null>): void => setWorkbenchValue('recovery', value)
-  const [pendingWorkbenchEdit, setPendingWorkbenchEdit] = useState<{ conversationId: string; itemId: string } | null>(null)
+  const [pendingWorkbenchEdit, setPendingWorkbenchEdit] = useState<{ conversationId: string; itemId: string; item?: AiTimelineItem } | null>(null)
   const sessionResetConversationIdsRef = useRef(new Set<string>())
   const workbenchAttachmentRestoreTokenRef = useRef(0)
   const handleEditTimelineItem = async (id: string, content: string): Promise<void> => {
     const conversationId = activeWorkbenchConversationIdRef.current
     const projectPath = project?.path
     const restoreToken = ++workbenchAttachmentRestoreTokenRef.current
-    const selected = aiTimelineRef.current.find((item) => item.id === id)
+    const selected = workbenchHistoryBrowse?.timeline.find(item => item.id === id) ?? aiTimelineRef.current.find((item) => item.id === id)
     if (!conversationId || !projectPath || !await requestConfirm({
       title: '编辑并重新发送这条消息？',
       message: '只会重置对话上下文，不会撤销 Agent 已经写入项目的文件。需要恢复代码时，请使用“版本记录”中的快照。',
@@ -2105,7 +2176,7 @@ export default function App(): React.JSX.Element {
     const replay = selected?.replay
     setPrompt(replay?.prompt ?? content)
     setAiAttachments([])
-    setPendingWorkbenchEdit({ conversationId, itemId: id })
+    setPendingWorkbenchEdit({ conversationId, itemId: id, item: selected })
     const replayAttachments = replay?.attachments ?? []
     if (!replayAttachments.length) {
       setNotice('已回填到输入框；发送后将从这条消息重建对话上下文，项目文件保持当前状态')
@@ -2127,7 +2198,7 @@ export default function App(): React.JSX.Element {
   const handleDeleteTimelineItem = async (id: string): Promise<void> => {
     const conversationId = activeWorkbenchConversationIdRef.current
     const projectPath = projectPathRef.current
-    const selected = aiTimelineRef.current.find((item) => item.id === id)
+    const selected = workbenchHistoryBrowse?.timeline.find(item => item.id === id) ?? aiTimelineRef.current.find((item) => item.id === id)
     const generation = conversationGenerationRef.current.get(conversationId)
     if (!conversationId || !projectPath || !selected) return
     if (generation === undefined) {
@@ -2144,6 +2215,16 @@ export default function App(): React.JSX.Element {
       actionIcon: 'delete'
     })) return
     try {
+      if (workbenchHistoryPageRef.current && window.modmind.conversations.deleteHistoryItem) {
+        await persistPagedWorkbenchWindow(projectPath, conversationId, aiTimelineRef.current)
+        const updated = await window.modmind.conversations.deleteHistoryItem(projectPath, conversationId, generation, id)
+        if (activeWorkbenchConversationIdRef.current !== conversationId || projectPathRef.current !== projectPath) return
+        conversationGenerationRef.current.set(conversationId, updated.generation)
+        sessionResetConversationIdsRef.current.add(conversationId)
+        setWorkbenchHistoryRetry(value => value + 1); setPendingWorkbenchEdit(null)
+        setNotice('这轮对话已删除；项目文件保持当前状态')
+        return
+      }
       const timeline = workbenchDeleteTimelineItem(aiTimelineRef.current, id)
       const updated = await window.modmind.conversations.replaceView(projectPath, conversationId, generation, { timeline })
       if (activeWorkbenchConversationIdRef.current !== conversationId || projectPathRef.current !== projectPath) return
@@ -2158,7 +2239,7 @@ export default function App(): React.JSX.Element {
   }
   const handleRewindTimelineTo = async (id: string): Promise<void> => {
     const conversationId = activeWorkbenchConversationIdRef.current
-    const selected = aiTimelineRef.current.find((item) => item.id === id)
+    const selected = workbenchHistoryBrowse?.timeline.find(item => item.id === id) ?? aiTimelineRef.current.find((item) => item.id === id)
     if (!conversationId || !selected || !await requestConfirm({
       title: '截断后续工作台对话？',
       message: `${selected.kind === 'user' ? '这条提问及其后的对话会被移除' : '这条回答会保留，其后的对话会被移除'}，项目文件不会回滚。`,
@@ -2169,14 +2250,16 @@ export default function App(): React.JSX.Element {
       actionIcon: 'restore'
     })) return
     try {
+      if (workbenchHistoryPageRef.current) await persistPagedWorkbenchWindow(projectPathRef.current, conversationId, aiTimelineRef.current)
       const view = workbenchRewindTimelineTo(aiTimelineRef.current, id)
-      const fork = await window.modmind.conversations.fork(projectPathRef.current, { sourceConversationId: conversationId, ...(selected.turnId ? selected.kind === 'user' ? { beforeTurnId: selected.turnId } : { throughTurnId: selected.turnId } : { throughSequence: aiTimelineRef.current.findIndex((item) => item.id === id) }), view: { timeline: view }, backend: settingsRef.current.codingBackend })
+      const fork = await window.modmind.conversations.fork(projectPathRef.current, { sourceConversationId: conversationId, ...(workbenchHistoryPageRef.current ? { historyItemId: id } : {}), ...(selected.turnId ? selected.kind === 'user' ? { beforeTurnId: selected.turnId } : { throughTurnId: selected.turnId } : { throughSequence: aiTimelineRef.current.findIndex((item) => item.id === id) }), view: { timeline: view }, backend: settingsRef.current.codingBackend })
       setWorkbenchConversations((current) => [...current, { id: fork.id, title: fork.title, createdAt: fork.createdAt, updatedAt: fork.updatedAt, sessionScope: workbenchSessionScope(fork.id) }])
       setActiveWorkbenchConversationId(fork.id)
       if (fork.parent?.nativeMode !== 'native') sessionResetConversationIdsRef.current.add(fork.id)
       setAiTimeline((fork.view.timeline as AiTimelineItem[] | undefined) ?? view)
       setNotice('已从此处创建新的对话分支；原对话仍保留')
     } catch (error) {
+      if (workbenchHistoryPageRef.current) { setNotice(`分支保存失败，原对话已保留：${errorMessage(error)}`); return }
       setAiTimeline((current) => workbenchRewindTimelineTo(current, id))
       sessionResetConversationIdsRef.current.add(conversationId)
       setNotice(`分支保存失败，已暂时截断当前视图：${errorMessage(error)}`)
@@ -2192,29 +2275,40 @@ export default function App(): React.JSX.Element {
   const [minecraftEvents, setMinecraftEvents] = useState<MinecraftRuntimeEvent[]>([])
   const [building, setBuilding] = useState(false)
   const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([])
+  const [snapshotListState, setSnapshotListState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [snapshotListError, setSnapshotListError] = useState('')
   const [snapshotStorage, setSnapshotStorage] = useState<SnapshotStorageInfo | null>(null)
   const [snapshotStorageError, setSnapshotStorageError] = useState('')
   const [restoringSnapshotId, setRestoringSnapshotId] = useState('')
   const [deletingSnapshotId, setDeletingSnapshotId] = useState('')
+  const [creatingSnapshot, setCreatingSnapshot] = useState(false)
   const currentSnapshotStorage = snapshotStorage && project && normalizeProjectPath(snapshotStorage.projectPath) === normalizeProjectPath(project.path) ? snapshotStorage : null
   const snapshotStorageWarning = Boolean(currentSnapshotStorage?.warning)
   useEffect(() => {
     const projectPath = project?.path
     setSnapshotStorage(null)
     setSnapshotStorageError('')
+    setSnapshotListState('idle')
+    setSnapshotListError('')
     if (!projectPath) return
     let active = true
     const unsubscribe = window.modmind.snapshots.onStorageChanged(status => {
       if (!active || normalizeProjectPath(status.projectPath) !== normalizeProjectPath(projectPath)) return
       setSnapshotStorage(status)
       setSnapshotStorageError('')
-      void window.modmind.snapshots.list(projectPath).then(setSnapshots).catch(() => undefined)
+      if (currentViewRef.current === 'snapshots') void refreshSnapshotsFor(projectPath).catch(() => undefined)
     })
+    return () => { active = false; unsubscribe() }
+  }, [project?.path])
+  useEffect(() => {
+    const projectPath = project?.path
+    if (!projectPath || view !== 'snapshots') return
+    let active = true
     void window.modmind.snapshots.storage(projectPath).then(status => {
       if (active) { setSnapshotStorage(status); setSnapshotStorageError('') }
     }).catch(error => { if (active) setSnapshotStorageError(errorMessage(error)) })
-    return () => { active = false; unsubscribe() }
-  }, [project?.path])
+    return () => { active = false }
+  }, [project?.path, view])
   const [loaderCatalog, setLoaderCatalog] = useState<LoaderVersionOption[]>([])
   const [migrationLoader, setMigrationLoader] = useState<LoaderKind>('fabric')
   const [migrationVersion, setMigrationVersion] = useState('')
@@ -2229,7 +2323,7 @@ export default function App(): React.JSX.Element {
     setWorkbenchFeatures(value)
     try { localStorage.setItem('modmind.workbenchFeatures', JSON.stringify(value)) } catch { /* Keep the current selection even when storage is unavailable. */ }
   }
-  useLayoutEffect(() => { applyAppearance(normalizeAppearance(settings)) }, [settings.darkMode, settings.themePreset, settings.customThemeColors, settings.background])
+  useLayoutEffect(() => { applyAppearance(normalizeAppearance(settings)) }, [settings.darkMode, settings.themePreset, settings.fontScale, settings.customThemeColors, settings.background])
   useEffect(() => window.modmind.settings.onAppearanceChanged(appearance => {
     if (settingsSavePendingRef.current > 0) return
     setSettings(previous => ({ ...previous, ...appearance }))
@@ -2360,7 +2454,12 @@ export default function App(): React.JSX.Element {
       title: document.title,
       url: window.location.href,
       capturedAt: new Date().toISOString(),
-      html: `<!doctype html>\n${root.outerHTML}`
+      html: `<!doctype html>\n${root.outerHTML}`,
+      state: { projectPath: project?.path, selectedFile, editorDirty, editorChars: editorContent.length, uiMode,
+        workbench: { conversationId: activeWorkbenchConversationId, generation: conversationGenerationRef.current.get(activeWorkbenchConversationId), timelineEntries: aiTimeline.length, planning, backend: runningBackend },
+        viewport: { width: window.innerWidth, height: window.innerHeight, devicePixelRatio: window.devicePixelRatio },
+        appearance: { darkMode: settings.darkMode, themePreset: settings.themePreset },
+        media: Array.from(document.querySelectorAll<HTMLMediaElement>('audio,video')).slice(0, 20).map(element => ({ currentTime: element.currentTime, duration: Number.isFinite(element.duration) ? element.duration : null, paused: element.paused, readyState: element.readyState, error: element.error?.code })) }
     }
     pageSnapshotsRef.current.set(view, snapshot)
     return snapshot
@@ -2374,6 +2473,15 @@ export default function App(): React.JSX.Element {
     const timer = window.setTimeout(() => capturePageSnapshot(), 250)
     return () => window.clearTimeout(timer)
   }, [view, project?.path, uiMode])
+
+  useEffect(() => {
+    window.modmind.diagnostics.reportEvent?.({ operation: 'workspace-context', data: { view, projectPath: project?.path, selectedFile, editorDirty, uiMode } })
+  }, [view, project?.path, selectedFile, editorDirty, uiMode])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => recordUiContentDiagnostic('editor-state', { projectPath: project?.path, relativePath: selectedFile, dirty: editorDirty, revision: editorRequestRef.current, draftStorage: 'current-process memory until saved' }, editorContent), 500)
+    return () => window.clearTimeout(timer)
+  }, [project?.path, selectedFile, editorDirty, editorContent])
 
   useEffect(() => {
     if (!isDetachedWindow) return
@@ -2459,9 +2567,9 @@ export default function App(): React.JSX.Element {
   const workbenchConversationsLoadedRef = useRef(false)
   const aiTimelineRef = useRef<AiTimelineItem[]>([])
   aiTimelineRef.current = aiTimeline
-  const persistedWorkbenchIndexRef = useRef<Map<string, string>>(new Map())
+  const persistedWorkbenchIndexRef = useRef(new BudgetedCache<string, string>(8 * 1024 * 1024, 16, value => value.length * 2))
   const requestedWorkbenchIndexRef = useRef<Map<string, string>>(new Map())
-  const persistedWorkbenchTimelineRef = useRef<Map<string, string>>(new Map())
+  const persistedWorkbenchTimelineRef = useRef(new BudgetedCache<string, string>(16 * 1024 * 1024, 8, value => value.length * 2))
   const requestedWorkbenchTimelineRef = useRef<Map<string, string>>(new Map())
   const workbenchPersistenceGenerationRef = useRef(0)
   const projectPathRef = useRef('')
@@ -2540,6 +2648,8 @@ export default function App(): React.JSX.Element {
     void cancellation
   }
   const activateWorkbenchConversation = (conversationId: string): void => {
+    workbenchHistoryCancelRef.current()
+    setWorkbenchHistoryState('loading')
     setPendingWorkbenchEdit(null)
     setActiveWorkbenchConversationId(conversationId)
     // Clearing the loaded key makes the timeline effect reload from the new
@@ -2561,6 +2671,7 @@ export default function App(): React.JSX.Element {
   }
   const startWorkbenchConversation = async (): Promise<void> => {
     if (planning) return
+    if (!workbenchConversationsLoadedRef.current) { setNotice('请先重试读取对话列表，再新建对话'); return }
     const created = createWorkbenchConversation(workbenchConversations, new Date(), uiMode === 'beginner' ? 'beginner' : undefined)
     const projectPath = projectPathRef.current
     if (!projectPath) return
@@ -2630,7 +2741,7 @@ export default function App(): React.JSX.Element {
     const title = await requestPrompt({ title: '重命名对话', inputLabel: '对话名称', value: selected.title, confirmLabel: '保存名称' })
     if (title === null) return
     try {
-      await window.modmind.conversations.create(projectPath, { id: conversationId, surface: 'workspace', title: selected.title })
+      await ensureConversationProjection(projectPath, { id: conversationId, surface: 'workspace', title: selected.title })
       const renamed = await window.modmind.conversations.rename(projectPath, conversationId, title)
       const next = workbenchConversations.map(entry => entry.id === conversationId ? { ...entry, title: renamed.title, titleSource: 'manual' as const } : entry)
       await requireRedundantWorkbenchWrite(() => persistWorkbenchIndexNow(projectPath, next), '重命名后的对话索引')
@@ -2642,7 +2753,7 @@ export default function App(): React.JSX.Element {
     const projectPath = projectPathRef.current
     if (!selected || !projectPath) return
     try {
-      await window.modmind.conversations.create(projectPath, { id: conversationId, surface: 'workspace', title: selected.title })
+      await ensureConversationProjection(projectPath, { id: conversationId, surface: 'workspace', title: selected.title })
       const updated = await window.modmind.conversations.pin(projectPath, conversationId, !selected.pinned)
       const next = sortWorkbenchConversations(workbenchConversations.map(entry => entry.id === conversationId ? { ...entry, pinned: updated.pinned } : entry))
       await requireRedundantWorkbenchWrite(() => persistWorkbenchIndexNow(projectPath, next), '置顶后的对话索引')
@@ -2688,6 +2799,7 @@ export default function App(): React.JSX.Element {
   const [savingAiPreferences, setSavingAiPreferences] = useState(false)
   const [exportArtifactAvailable, setExportArtifactAvailable] = useState(false)
   const [diagnosticExporting, setDiagnosticExporting] = useState(false)
+  const [diagnosticOptions, setDiagnosticOptions] = useState<DiagnosticExportOptions>({})
   const [updateInfo, setUpdateInfo] = useState<AppVersionCheckResult | null>(null)
   const [changelog, setChangelog] = useState<AppChangelogSnapshot | null>(null)
   const [startupChangelogChecked, setStartupChangelogChecked] = useState(false)
@@ -2734,6 +2846,39 @@ export default function App(): React.JSX.Element {
   const [aiHistoryLoadedKey, setAiHistoryLoadedKey] = useState('')
   const [workbenchPersistenceState, setWorkbenchPersistenceState] = useState<WorkbenchPersistenceState>('loading')
   const [workbenchPersistenceMessage, setWorkbenchPersistenceMessage] = useState('正在读取对话')
+  const [workbenchHistoryState, setWorkbenchHistoryState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const persistedProjectionTimelinesRef = useRef(new WeakSet<AiTimelineItem[]>())
+  const workbenchHistoryPageRef = useRef<import('../../shared/types').ConversationHistoryPage | null>(null)
+  const [workbenchHistoryBrowse, setWorkbenchHistoryBrowse] = useState<(HistorySegment<AiTimelineItem> & { segments: HistorySegment<AiTimelineItem>[] }) | null>(null)
+  const [workbenchHistoryPaging, setWorkbenchHistoryPaging] = useState(false)
+  const [workbenchHistoryPageError, setWorkbenchHistoryPageError] = useState('')
+  const workbenchHistoryPagingRef = useRef(false)
+  const workbenchHistoryDirectionRef = useRef<'older' | 'newer'>('older')
+  const workbenchHistoryPageRequestRef = useRef(0)
+  const workbenchHistorySavingRef = useRef(false)
+  const workbenchHistorySaveChainRef = useRef<Promise<unknown>>(Promise.resolve())
+  const persistPagedWorkbenchWindow = (projectPath: string, id: string, timeline: AiTimelineItem[]): Promise<import('../../shared/types').ConversationHistoryPage | null> => {
+    const saving = workbenchHistorySaveChainRef.current.catch(() => undefined).then(async () => {
+      const page = workbenchHistoryPageRef.current
+      if (!page || page.document.id !== id || !window.modmind.conversations.saveHistoryWindow) throw new Error('对话位置已变化，未覆盖旧历史')
+      if (persistedProjectionTimelinesRef.current.has(timeline) && page.document.checkpointSequence >= page.document.lastSequence) return page
+      workbenchHistorySavingRef.current = true
+      try {
+        const updated = await window.modmind.conversations.saveHistoryWindow(projectPath, id, page.document.generation, page.token, page.start, timeline)
+        if (!updated) throw new Error('对话保存后无法回读')
+        if (projectPathRef.current === projectPath && activeWorkbenchConversationIdRef.current === id && workbenchHistoryPageRef.current === page) workbenchHistoryPageRef.current = updated
+        // A degraded commit advances the token too; keep it retryable without claiming a dual save.
+        if (updated.writeResult?.durability === 'degraded') throw new Error(updated.writeResult.warning ?? '冗余备份尚未全部完成')
+        persistedProjectionTimelinesRef.current.add(timeline)
+        return updated
+      } finally { workbenchHistorySavingRef.current = false }
+    })
+    workbenchHistorySaveChainRef.current = saving
+    return saving
+  }
+  const [workbenchHistoryRetry, setWorkbenchHistoryRetry] = useState(0)
+  const [workbenchIndexRetry, setWorkbenchIndexRetry] = useState(0)
+  const workbenchHistoryCancelRef = useRef<() => void>(() => {})
   const conversationGenerationRef = useRef(new Map<string, number>())
   const aiOutputHistoryPath = project && activeWorkbenchConversationId ? `.modmind/workbench-timeline-${activeWorkbenchConversationId}.json` : ''
   // One conversation has one timeline across all execution backends.
@@ -2759,7 +2904,10 @@ export default function App(): React.JSX.Element {
     setWorkbenchPersistenceMessage('正在保存对话索引')
     try {
       const result = await window.modmind.project.writeWorkbenchData(workbenchConversationsFile, content, projectPath)
-      if (requestedWorkbenchIndexRef.current.get(key) === content) persistedWorkbenchIndexRef.current.set(key, content)
+      if (requestedWorkbenchIndexRef.current.get(key) === content) {
+        persistedWorkbenchIndexRef.current.set(key, content)
+        requestedWorkbenchIndexRef.current.delete(key)
+      }
       applyWorkbenchWriteResult(result, generation)
       return result
     } catch (error) {
@@ -2785,7 +2933,10 @@ export default function App(): React.JSX.Element {
     setWorkbenchPersistenceMessage('正在保存对话')
     try {
       const result = await window.modmind.project.writeWorkbenchData(historyPath, content, projectPath)
-      if (requestedWorkbenchTimelineRef.current.get(key) === content) persistedWorkbenchTimelineRef.current.set(key, content)
+      if (requestedWorkbenchTimelineRef.current.get(key) === content) {
+        persistedWorkbenchTimelineRef.current.set(key, content)
+        requestedWorkbenchTimelineRef.current.delete(key)
+      }
       applyWorkbenchWriteResult(result, generation)
       return result
     } catch (error) {
@@ -2821,7 +2972,8 @@ export default function App(): React.JSX.Element {
   // timeline save effect cannot overwrite anything.
   useEffect(() => {
     workbenchConversationsLoadedRef.current = false
-    setHistoryLoadedProject('')
+    workbenchHistoryCancelRef.current()
+    setWorkbenchHistoryState('loading')
     setPendingWorkbenchEdit(null)
     sessionResetConversationIdsRef.current.clear()
     setWorkbenchConversations([])
@@ -2831,6 +2983,13 @@ export default function App(): React.JSX.Element {
     if (!project?.path) return
     let cancelled = false
     const projectPath = project.path
+    const cancelIndex = (): void => {
+      cancelled = true
+      setWorkbenchHistoryState('error')
+      setWorkbenchPersistenceState('error')
+      setWorkbenchPersistenceMessage('已暂停读取对话列表')
+    }
+    workbenchHistoryCancelRef.current = cancelIndex
     const readOptionalLocalStorage = (key: string): string => {
       try { return localStorage.getItem(key) ?? '' } catch { return '' }
     }
@@ -2857,9 +3016,9 @@ export default function App(): React.JSX.Element {
           conversations = normalizeWorkbenchConversations(parsed)
           if (parsed.length > 0 && conversations.length === 0) throw new Error('对话索引中没有可安全恢复的条目')
         }
-        const durable = await window.modmind.conversations.list(projectPath, 'workspace').catch(() => [])
-        const durableConversations: WorkbenchConversation[] = durable.map((entry) => ({ id: entry.id, title: entry.title, createdAt: entry.createdAt, updatedAt: entry.updatedAt, sessionScope: workbenchSessionScope(entry.id), pinned: entry.pinned, titleSource: entry.titleSource, ...(entry.agentMode === 'beginner' || conversations.find(item => item.id === entry.id)?.agentMode === 'beginner' ? { agentMode: 'beginner' as const } : {}) }))
-        conversations = sortWorkbenchConversations([...durableConversations, ...conversations.filter((entry) => !durableConversations.some((durableEntry) => durableEntry.id === entry.id))])
+        const durable = await window.modmind.conversations.list(projectPath, 'workspace')
+        if (cancelled) return
+        conversations = mergeWorkbenchConversationIndexes(conversations, durable)
         const indexPersistenceKey = `${projectPath}\n${workbenchConversationsFile}`
         if (stored.status === 'ok') persistedWorkbenchIndexRef.current.set(indexPersistenceKey, JSON.stringify(conversations))
         else persistedWorkbenchIndexRef.current.delete(indexPersistenceKey)
@@ -2879,14 +3038,14 @@ export default function App(): React.JSX.Element {
       } catch (error) {
         if (cancelled) return
         workbenchConversationsLoadedRef.current = false
-        setHistoryLoadedProject(projectPath)
+        setWorkbenchHistoryState('error')
         setWorkbenchPersistenceState('error')
         setWorkbenchPersistenceMessage(`对话索引加载失败：${errorMessage(error)}`)
       }
     }
     void loadIndex()
-    return () => { cancelled = true }
-  }, [project?.path])
+    return () => { cancelled = true; if (workbenchHistoryCancelRef.current === cancelIndex) workbenchHistoryCancelRef.current = () => {} }
+  }, [project?.path, workbenchIndexRetry])
   useEffect(() => {
     if (!project?.path || !workbenchConversationsLoadedRef.current) return
     const content = JSON.stringify(workbenchConversations)
@@ -2934,7 +3093,7 @@ export default function App(): React.JSX.Element {
       ? describeAiFailureForUser(humanized)
       : humanized
   }
-  const projectWorkbenchCacheRef = useRef<Map<string, ProjectWorkbenchState>>(new Map())
+  const projectWorkbenchCacheRef = useRef(new RebuildableStateCache<string, ProjectWorkbenchState>(32 * 1024 * 1024, 4, workbenchCacheBytes, preserveWorkbenchDraft))
   const activeWorkbenchProjectRef = useRef('')
   const currentWorkbenchStateRef = useRef<ProjectWorkbenchState | null>(null)
   currentWorkbenchStateRef.current = {
@@ -3069,18 +3228,24 @@ export default function App(): React.JSX.Element {
   }
 
   const refreshSnapshotsFor = async (projectPath: string): Promise<void> => {
-    const nextSnapshots = await window.modmind.snapshots.list(projectPath)
-    if (isForegroundProject(projectPath)) setSnapshots(nextSnapshots)
-    else {
-      const key = normalizeProjectPath(projectPath)
-      const current = projectWorkbenchCacheRef.current.get(key) ?? emptyProjectWorkbenchState()
-      projectWorkbenchCacheRef.current.set(key, {...current, snapshots: nextSnapshots})
+    if (!isForegroundProject(projectPath) || currentViewRef.current !== 'snapshots') return
+    setSnapshotListState('loading')
+    setSnapshotListError('')
+    try {
+      const nextSnapshots = await window.modmind.snapshots.list(projectPath)
+      if (isForegroundProject(projectPath) && currentViewRef.current === 'snapshots') { setSnapshots(nextSnapshots); setSnapshotListState('ready') }
+    } catch (error) {
+      if (isForegroundProject(projectPath) && currentViewRef.current === 'snapshots') { setSnapshotListState('error'); setSnapshotListError(errorMessage(error)) }
+      throw error
     }
   }
 
   const refreshSnapshots = async (): Promise<void> => {
     if (project) await refreshSnapshotsFor(project.path)
   }
+  useEffect(() => {
+    if (project?.path && view === 'snapshots') void refreshSnapshotsFor(project.path).catch(() => undefined)
+  }, [project?.path, view])
 
   const refreshExportArtifactFor = async (projectPath: string): Promise<void> => {
     const available = await window.modmind.project.hasExportArtifact(projectPath).catch(() => false)
@@ -3108,6 +3273,34 @@ export default function App(): React.JSX.Element {
     setRecentProjects(await window.modmind.project.listRecent())
   }
 
+  const pageWorkbenchHistory = async (direction: 'older' | 'newer' | 'latest'): Promise<void> => {
+    if (direction === 'latest') {
+      ++workbenchHistoryPageRequestRef.current
+      workbenchHistoryPagingRef.current = false; setWorkbenchHistoryPaging(false)
+      setWorkbenchHistoryBrowse(null); setWorkbenchHistoryPageError('')
+      return
+    }
+    if (workbenchHistoryPagingRef.current) return
+    const projectPath = project?.path, id = activeWorkbenchConversationId
+    if (!projectPath || !id) return
+    const ticket = ++workbenchHistoryPageRequestRef.current
+    const cancelled = (): boolean => ticket !== workbenchHistoryPageRequestRef.current || projectPathRef.current !== projectPath || activeWorkbenchConversationIdRef.current !== id
+    workbenchHistoryPagingRef.current = true; workbenchHistoryDirectionRef.current = direction
+    setWorkbenchHistoryPaging(true); setWorkbenchHistoryPageError('')
+    try {
+      await workbenchHistorySaveChainRef.current.catch(() => undefined)
+      if (cancelled()) return
+      const latest = workbenchHistoryPageRef.current, current = workbenchHistoryBrowse?.page ?? latest
+      if (!latest || !current || (direction === 'older' ? current.start <= 0 : current.end >= latest.end)) return
+      const input = direction === 'older' ? { before: current.start } : { after: current.end }
+      const result = await readWorkbenchHistoryWindow(window.modmind.conversations, projectPath, id, { ...input, token: latest.token, generation: latest.document.generation }, cancelled, parseStoredWorkbenchTimeline, humanizeActivity, humanizeOutput)
+      if (!result || cancelled()) return
+      const segments = workbenchHistoryBrowse?.segments ?? [{ page: latest, timeline: aiTimelineRef.current }]
+      setWorkbenchHistoryBrowse(joinHistorySegments(segments, result, direction))
+    } catch (error) { if (!cancelled()) setWorkbenchHistoryPageError(`历史读取失败：${errorMessage(error)}`) }
+    finally { if (ticket === workbenchHistoryPageRequestRef.current) { workbenchHistoryPagingRef.current = false; setWorkbenchHistoryPaging(false) } }
+  }
+
   useEffect(() => {
     if (!aiOutputHistoryKey) {
       setAiTimeline([])
@@ -3119,17 +3312,54 @@ export default function App(): React.JSX.Element {
     let cancelled = false
     const historyProjectPath = project?.path ?? ''
     const historyConversationId = activeWorkbenchConversationId
+    ++workbenchHistoryPageRequestRef.current
+    workbenchHistoryPageRef.current = null; workbenchHistoryPagingRef.current = false
+    setWorkbenchHistoryBrowse(null); setWorkbenchHistoryPaging(false); setWorkbenchHistoryPageError('')
+    setAiHistoryLoadedKey('')
+    setWorkbenchHistoryState('loading')
     setWorkbenchPersistenceState('loading')
     setWorkbenchPersistenceMessage('正在校验对话历史')
+    const cancelHistory = (): void => {
+      cancelled = true
+      setAiHistoryLoadedKey('')
+      setWorkbenchHistoryState('error')
+      setWorkbenchPersistenceState('error')
+      setWorkbenchPersistenceMessage('已暂停读取对话，可重试或切换对话')
+    }
+    workbenchHistoryCancelRef.current = cancelHistory
     const loadHistory = async (): Promise<void> => {
       try {
-        const unified = await window.modmind.conversations.read(historyProjectPath, historyConversationId).catch(() => null)
+        const result = await readWorkbenchHistoryWindow(window.modmind.conversations, historyProjectPath, historyConversationId, {}, () => cancelled, parseStoredWorkbenchTimeline, humanizeActivity, humanizeOutput)
+        if (cancelled) return
+        if (result) {
+          const { page, timeline } = result
+          conversationGenerationRef.current.set(historyConversationId, page.document.generation)
+          const live = aiTimelineRef.current.filter(item => item.sequence !== undefined && item.sequence > page.document.lastSequence)
+          const history = live.length ? [...timeline, ...live] : timeline
+          workbenchHistoryPageRef.current = page
+          setAiTimeline(history)
+          if (!live.length && page.document.checkpointSequence >= page.document.lastSequence) persistedProjectionTimelinesRef.current.add(history)
+          setAiHistoryLoadedKey(aiOutputHistoryKey); setWorkbenchHistoryState('ready'); setWorkbenchPersistenceState('ready'); setWorkbenchPersistenceMessage('对话历史已载入')
+          return
+        }
+        const unified = await readConversationHistory(window.modmind.conversations, historyProjectPath, historyConversationId, () => cancelled, count => {
+          if (!cancelled) setWorkbenchPersistenceMessage(`正在读取对话 · ${count.toLocaleString()} 条记录`)
+        })
         if (unified) {
+          if (cancelled || normalizeProjectPath(projectPathRef.current) !== normalizeProjectPath(historyProjectPath) || activeWorkbenchConversationIdRef.current !== historyConversationId) return
           conversationGenerationRef.current.set(historyConversationId, unified.generation)
           const history = await replayWorkbenchEventsAsync(parseStoredWorkbenchTimeline(unified.view.timeline), unified.events, humanizeActivity, humanizeOutput, () => cancelled)
           if (cancelled || normalizeProjectPath(projectPathRef.current) !== normalizeProjectPath(historyProjectPath) || activeWorkbenchConversationIdRef.current !== historyConversationId) return
-          setAiTimeline(history)
+          // Output may continue while an older snapshot is being restored.
+          const live = aiTimelineRef.current.filter(item => item.sequence !== undefined && item.sequence > unified.lastSequence)
+          if (live.length) {
+            const byId = new Map(history.map(item => [item.id, item]))
+            for (const item of live) byId.set(item.id, item)
+            setAiTimeline([...byId.values()].sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0)))
+          } else setAiTimeline(history)
+          persistedProjectionTimelinesRef.current.add(history)
           setAiHistoryLoadedKey(aiOutputHistoryKey)
+          setWorkbenchHistoryState('ready')
           setWorkbenchPersistenceState('ready')
           setWorkbenchPersistenceMessage('统一对话历史已校验')
           return
@@ -3157,9 +3387,10 @@ export default function App(): React.JSX.Element {
           if (!Array.isArray(parsed)) throw new Error('对话历史格式无效')
           history = parseStoredWorkbenchTimeline(parsed)
         }
-        const migrated = await window.modmind.conversations.create(historyProjectPath, { id: historyConversationId, surface: 'workspace', agentMode: workbenchConversations.find((entry) => entry.id === historyConversationId)?.agentMode, title: workbenchConversations.find((entry) => entry.id === historyConversationId)?.title, view: { timeline: history } })
-        conversationGenerationRef.current.set(historyConversationId, migrated.generation)
         if (cancelled || normalizeProjectPath(projectPathRef.current) !== normalizeProjectPath(historyProjectPath) || activeWorkbenchConversationIdRef.current !== historyConversationId) return
+        const migrated = await ensureConversationProjection(historyProjectPath, { id: historyConversationId, surface: 'workspace', agentMode: workbenchConversations.find((entry) => entry.id === historyConversationId)?.agentMode, title: workbenchConversations.find((entry) => entry.id === historyConversationId)?.title, view: { timeline: history } })
+        if (cancelled || normalizeProjectPath(projectPathRef.current) !== normalizeProjectPath(historyProjectPath) || activeWorkbenchConversationIdRef.current !== historyConversationId) return
+        conversationGenerationRef.current.set(historyConversationId, migrated.generation)
         const persistenceKey = `${historyProjectPath}\n${aiOutputHistoryKey}`
         const needsMigration = migratedFromLegacy || Boolean(localFallback)
         if (stored.status === 'ok' && !needsMigration) persistedWorkbenchTimelineRef.current.set(persistenceKey, JSON.stringify(history))
@@ -3167,25 +3398,26 @@ export default function App(): React.JSX.Element {
         else persistedWorkbenchTimelineRef.current.delete(persistenceKey)
         requestedWorkbenchTimelineRef.current.delete(persistenceKey)
         setAiTimeline(history)
+        persistedProjectionTimelinesRef.current.add(history)
         setAiHistoryLoadedKey(aiOutputHistoryKey)
+        setWorkbenchHistoryState('ready')
         setWorkbenchPersistenceState('ready')
         setWorkbenchPersistenceMessage(stored.recovered ? stored.warning ?? '对话已从备份恢复' : needsMigration ? '正在迁移旧版对话' : '对话历史已校验')
       } catch (error) {
         if (cancelled || normalizeProjectPath(projectPathRef.current) !== normalizeProjectPath(historyProjectPath) || activeWorkbenchConversationIdRef.current !== historyConversationId) return
         setAiHistoryLoadedKey('')
+        setWorkbenchHistoryState('error')
         setWorkbenchPersistenceState('error')
         setWorkbenchPersistenceMessage(`对话历史加载失败：${errorMessage(error)}；已阻止覆盖`)
-      } finally {
-        if (!cancelled && normalizeProjectPath(projectPathRef.current) === normalizeProjectPath(historyProjectPath)
-          && activeWorkbenchConversationIdRef.current === historyConversationId) setHistoryLoadedProject(historyProjectPath)
       }
     }
     void loadHistory()
-    return () => { cancelled = true }
-  }, [aiOutputHistoryKey, activeWorkbenchConversationId])
+    return () => { cancelled = true; if (workbenchHistoryCancelRef.current === cancelHistory) workbenchHistoryCancelRef.current = () => {} }
+  }, [aiOutputHistoryKey, activeWorkbenchConversationId, workbenchHistoryRetry])
 
   useEffect(() => {
     if (!project || !aiOutputHistoryKey || aiHistoryLoadedKey !== aiOutputHistoryKey) return
+    if (conversationGenerationRef.current.has(activeWorkbenchConversationId) || planning) return
     const timer = window.setTimeout(() => {
       // Serialize only the settled snapshot, never the entire history per token.
       const content = JSON.stringify(aiTimeline)
@@ -3201,19 +3433,28 @@ export default function App(): React.JSX.Element {
           localStorage.removeItem(`${project.path}:${settings.codingBackend}`)
         } catch { /* legacy browser storage is no longer authoritative */ }
       }).catch(() => undefined)
-    }, 250)
+    }, 1000)
     return () => window.clearTimeout(timer)
-  }, [aiTimeline, aiHistoryLoadedKey, aiOutputHistoryKey])
+  }, [aiTimeline, aiHistoryLoadedKey, aiOutputHistoryKey, planning])
 
   useEffect(() => {
-    if (!project?.path || !activeWorkbenchConversationId || !aiHistoryLoadedKey) return
+    if (!project?.path || !activeWorkbenchConversationId || aiHistoryLoadedKey !== aiOutputHistoryKey || workbenchHistoryState !== 'ready') return
+    if (planning || persistedProjectionTimelinesRef.current.has(aiTimeline)) return
     const generation = conversationGenerationRef.current.get(activeWorkbenchConversationId)
     if (generation === undefined) return
     const timer = window.setTimeout(() => {
-      void window.modmind.conversations.saveView(project.path, activeWorkbenchConversationId, generation, { timeline: aiTimeline }).catch(() => undefined)
-    }, 250)
+      const page = workbenchHistoryPageRef.current
+      if (page && window.modmind.conversations.saveHistoryWindow) {
+        void persistPagedWorkbenchWindow(project.path, activeWorkbenchConversationId, aiTimeline).catch(error => {
+          if (projectPathRef.current === project.path && activeWorkbenchConversationIdRef.current === activeWorkbenchConversationId) setWorkbenchHistoryPageError(`历史暂未保存：${errorMessage(error)}`)
+        })
+      } else {
+        const save = window.modmind.conversations.saveProjection ?? window.modmind.conversations.saveView
+        void save(project.path, activeWorkbenchConversationId, generation, { timeline: aiTimeline }).then(() => persistedProjectionTimelinesRef.current.add(aiTimeline)).catch(() => undefined)
+      }
+    }, 1000)
     return () => window.clearTimeout(timer)
-  }, [aiTimeline, activeWorkbenchConversationId, aiHistoryLoadedKey, project?.path])
+  }, [aiTimeline, activeWorkbenchConversationId, aiHistoryLoadedKey, project?.path, aiOutputHistoryKey, workbenchHistoryState, planning])
 
   useEffect(() => {
     if (!project?.path || settings.codingBackend === 'quota') return
@@ -3480,8 +3721,7 @@ export default function App(): React.JSX.Element {
     let cancelled = false
     void refreshFilesFor(project.path).catch(error => {
       if (!cancelled) setNotice(`文件列表加载失败：${errorMessage(error)}`)
-    }).finally(() => { if (!cancelled) setFilesLoadedProject(project.path) })
-    void refreshSnapshots().catch(() => undefined)
+    })
     setMigrationLoader(project.loader)
     setMigrationVersion('')
     setMigrationPreview(null)
@@ -3667,7 +3907,34 @@ export default function App(): React.JSX.Element {
   }
 
   const removeRecentProject = async (recent: ProjectInfo): Promise<void> => {
-    if (!await requestConfirm({ title: `删除项目“${recent.name}”？`, message: '这会将项目目录及其中的源代码、构建产物和快照移入系统回收站', confirmLabel: '删除项目', tone: 'danger' })) return
+    const active = project && normalizeProjectPath(project.path) === normalizeProjectPath(recent.path)
+    if (active && editorDirty && !await requestConfirm({ title: `移除“${recent.name}”的关联？`, message: '当前文件有未保存修改。移除关联会关闭项目并放弃这些修改，磁盘上的全部文件会保留。', confirmLabel: '放弃修改并移除', tone: 'danger' })) return
+    try {
+      await editorSaveQueueRef.current
+      const remaining = await window.modmind.project.removeRecent(recent.path)
+      setRecentProjects(remaining)
+      if (active) {
+        editorRequestRef.current += 1
+        setProject(null)
+        setProjectLauncherOpen(true)
+        setView('workspace')
+        setFiles([])
+        setSelectedFile('')
+        setEditorContent('')
+        setEditorDirty(false)
+        setAiPlan(null)
+        setAiTodo([])
+        setAiTimeline([])
+        setAiOutputStatus('idle')
+        setBuildResult(null)
+        setBuildError('')
+      }
+      setNotice(`已移除“${recent.name}”的关联，所有文件均已保留`)
+    } catch (error) { setErrorNotice(errorMessage(error)) }
+  }
+
+  const deleteRecentProject = async (recent: ProjectInfo): Promise<void> => {
+    if (!await requestConfirm({ title: `删除项目“${recent.name}”的文件？`, message: `这会将以下目录及其中的模组、配置、存档、源代码和快照全部移入系统回收站：\n${recent.path}`, confirmLabel: '删除项目文件', tone: 'danger' })) return
     try {
       const remaining = await window.modmind.project.deleteProject(recent.path)
       clearDeletedProjectHistory(recent.path)
@@ -3728,6 +3995,7 @@ export default function App(): React.JSX.Element {
     if (node.type !== 'file' || !editorProjectPath) return
     if (node.path === selectedFile && editorDirty) return
     const request = ++editorRequestRef.current
+    recordUiDiagnostic('editor-select', { projectPath: editorProjectPath, relativePath: node.path, requestId: String(request), previousPath: selectedFile, previousDirty: editorDirty })
     const snapshot = editorSnapshotRef.current
     const stillCurrent = (): boolean => request === editorRequestRef.current
       && editorSnapshotRef.current.projectPath === snapshot.projectPath
@@ -3746,7 +4014,8 @@ export default function App(): React.JSX.Element {
         return
       }
       const content = await window.modmind.project.readFile(node.path, editorProjectPath)
-      if (!stillCurrent()) return
+      if (!stillCurrent()) { recordUiContentDiagnostic('editor-read-discarded', { projectPath: editorProjectPath, relativePath: node.path, requestId: String(request) }, content); return }
+      recordUiContentDiagnostic('editor-read-applied', { projectPath: editorProjectPath, relativePath: node.path, requestId: String(request) }, content)
       setSelectedFile(node.path)
       setEditorContent(content)
       setEditorDirty(false)
@@ -4108,27 +4377,38 @@ export default function App(): React.JSX.Element {
     const editItemId = pendingWorkbenchEdit?.conversationId === activeConversation.id ? pendingWorkbenchEdit.itemId : ''
     const editIndex = editItemId ? aiTimelineRef.current.findIndex((item) => item.id === editItemId) : -1
     const resetSession = sessionResetConversationIdsRef.current.delete(activeConversation.id)
-    const needsReset = editIndex >= 0 || resetSession
-    const baseTimeline = editIndex >= 0 ? aiTimelineRef.current.slice(0, editIndex) : aiTimelineRef.current
+    const needsReset = Boolean(editItemId) || resetSession
+    let baseTimeline = editIndex >= 0 ? aiTimelineRef.current.slice(0, editIndex) : editItemId ? [] : aiTimelineRef.current
     const isRewind = needsReset
     const dialogueContext = isRewind ? workbenchDialogueToText(workbenchFinalDialogue(baseTimeline)) : ''
-    const fallbackDialogueContext = workbenchDialogueToText(workbenchFinalDialogue(baseTimeline).map(item => item.kind === 'answer' || item.kind === 'response' ? { ...item, content: splitDiscussionChoices(item.content).content } : item))
+    const fallbackDialogue = (timeline: AiTimelineItem[]): string => [workbenchHistoryPageRef.current?.dialoguePrefix ?? '', workbenchDialogueToText(workbenchFinalDialogue(timeline).map(item => item.kind === 'answer' || item.kind === 'response' ? { ...item, content: splitDiscussionChoices(item.content).content } : item))].filter(Boolean).join('\n').slice(-120_000)
+    let fallbackDialogueContext = fallbackDialogue(baseTimeline)
     const repeated = isRepeatedAiPrompt(requestPrompt, taskPromptHistory)
     let promptForAgent = isRewind
       ? `用户已重置对话上下文。项目文件保持当前状态，并且是判断现状的唯一依据。${dialogueContext ? `\n\n保留的最近对话：\n${dialogueContext}` : ''}\n\n最新请求：\n${requestPrompt}`
       : requestPrompt
     let fallbackPromptForAgent = `以下为备用的可见对话记录。需要从文字历史接续时使用，不要重复已经完成的工作。项目文件是当前实现状态的唯一依据。${fallbackDialogueContext ? `\n\n完整可见对话：\n${fallbackDialogueContext}` : ''}\n\n最新请求：\n${requestPrompt}`
-    if (editIndex >= 0) {
+    if (editItemId) {
       const source = activeConversation
-      const selected = aiTimelineRef.current[editIndex]
+      const selected = pendingWorkbenchEdit?.item ?? aiTimelineRef.current[editIndex]
       try {
+        if (workbenchHistoryPageRef.current) await persistPagedWorkbenchWindow(taskProjectPath, source.id, aiTimelineRef.current)
         const fork = await window.modmind.conversations.fork(taskProjectPath, {
           sourceConversationId: source.id,
+          ...(workbenchHistoryPageRef.current ? { historyItemId: editItemId } : {}),
           ...(selected?.turnId ? { beforeTurnId: selected.turnId } : { throughSequence: Math.max(0, editIndex - 1) }),
           view: { timeline: baseTimeline },
           backend: selectedBackend
         })
         activeConversation = { id: fork.id, title: fork.title, createdAt: fork.createdAt, updatedAt: fork.updatedAt, sessionScope: workbenchSessionScope(fork.id), ...(beginnerAgent ? { agentMode: 'beginner' as const } : {}) }
+        if (workbenchHistoryPageRef.current && window.modmind.conversations.historyPage) {
+          const branch = await readWorkbenchHistoryWindow(window.modmind.conversations, taskProjectPath, fork.id, {}, () => false, parseStoredWorkbenchTimeline, humanizeActivity, humanizeOutput)
+          if (!branch) throw new Error('分支历史无法读取')
+          baseTimeline = branch.timeline; workbenchHistoryPageRef.current = branch.page
+          fallbackDialogueContext = fallbackDialogue(baseTimeline)
+          fallbackPromptForAgent = `以下为备用的可见对话记录。需要从文字历史接续时使用，不要重复已经完成的工作。项目文件是当前实现状态的唯一依据。${fallbackDialogueContext ? `\n\n保留的最近对话：\n${fallbackDialogueContext}` : ''}\n\n最新请求：\n${requestPrompt}`
+          if (fork.parent?.nativeMode !== 'native') promptForAgent = fallbackPromptForAgent
+        }
         nextConversations = [...nextConversations, activeConversation]
         promptHistoryKey = workbenchPromptHistoryStorageKey(taskProjectPath, activeConversation)
         if (fork.parent?.nativeMode === 'native') promptForAgent = requestPrompt
@@ -4163,7 +4443,7 @@ export default function App(): React.JSX.Element {
     const nextHistoryKey = `${taskProjectPath}:${activeConversation.id}`
     let conversationGeneration: number | undefined
     try {
-      const conversationDocument = await window.modmind.conversations.create(taskProjectPath, {
+      const conversationDocument = (workbenchHistoryPageRef.current?.document.id === activeConversation.id ? workbenchHistoryPageRef.current.document : null) ?? await ensureConversationProjection(taskProjectPath, {
         id: activeConversation.id,
         surface: 'workspace',
         ...(beginnerAgent ? { agentMode: 'beginner' as const } : {}),
@@ -4172,14 +4452,17 @@ export default function App(): React.JSX.Element {
       })
       conversationGeneration = conversationDocument.generation
       conversationGenerationRef.current.set(activeConversation.id, conversationGeneration)
-      await window.modmind.conversations.saveView(taskProjectPath, activeConversation.id, conversationGeneration, { timeline: nextTimeline }, nextConversations.find(item => item.id === activeConversation.id)?.title)
+      if (workbenchHistoryPageRef.current?.document.id === activeConversation.id && window.modmind.conversations.saveHistoryWindow) {
+        await persistPagedWorkbenchWindow(taskProjectPath, activeConversation.id, nextTimeline)
+      } else await saveConversationProjection(taskProjectPath, activeConversation.id, conversationGeneration, { timeline: nextTimeline }, nextConversations.find(item => item.id === activeConversation.id)?.title)
     } catch (error) {
+      if (workbenchHistoryPageRef.current) { setNotice(`消息未发送，旧历史已保留：${errorMessage(error)}`); return }
       setWorkbenchPersistenceMessage(`统一对话存储暂不可用，将保留兼容历史：${errorMessage(error)}`)
     }
     try {
       await Promise.all([
         requireRedundantWorkbenchWrite(() => persistWorkbenchIndexNow(taskProjectPath, nextConversations), '对话索引'),
-        requireRedundantWorkbenchWrite(() => persistWorkbenchTimelineNow(taskProjectPath, nextHistoryPath, nextHistoryKey, nextTimeline), '用户消息')
+        workbenchHistoryPageRef.current ? Promise.resolve() : requireRedundantWorkbenchWrite(() => persistWorkbenchTimelineNow(taskProjectPath, nextHistoryPath, nextHistoryKey, nextTimeline), '用户消息')
       ])
     } catch (error) {
       if (resetSession) sessionResetConversationIdsRef.current.add(activeConversation.id)
@@ -4588,15 +4871,18 @@ export default function App(): React.JSX.Element {
   }
 
   const createSnapshot = async (): Promise<void> => {
-    if (!project) return
+    if (!project || creatingSnapshot || restoringSnapshotId || deletingSnapshotId) return
+    const projectPath = project.path
+    setCreatingSnapshot(true)
     try {
-      const projectPath = project.path
       const result = await window.modmind.snapshots.create('手动快照', projectPath)
-      setSnapshots((current) => [result, ...current])
-      setNotice(`已保存 ${result.fileCount} 个文件`)
+      if (isForegroundProject(projectPath)) {
+        setSnapshots(current => [result, ...current.filter(item => item.id !== result.id)])
+        setNotice(`已保存 ${result.fileCount} 个文件`)
+      }
     } catch (error) {
-      setNotice(`快照失败：${errorMessage(error)}`)
-    }
+      if (isForegroundProject(projectPath)) setNotice(`快照失败：${errorMessage(error)}`)
+    } finally { setCreatingSnapshot(false) }
   }
 
   const restoreSnapshot = async (snapshot: SnapshotInfo): Promise<void> => {
@@ -4642,6 +4928,19 @@ export default function App(): React.JSX.Element {
     } finally {
       setDeletingSnapshotId('')
     }
+  }
+
+  const deleteSnapshots = async (selected: SnapshotInfo[]): Promise<import('../../shared/types').SnapshotBatchDeleteResult | undefined> => {
+    const projectPath = project?.path
+    if (!projectPath || !selected.length || creatingSnapshot || restoringSnapshotId || deletingSnapshotId || building || planning || migrationBusy) return
+    if (!await requestConfirm({ title: '永久删除所选 ' + selected.length + ' 个快照？', message: '仅删除所选快照，不修改当前项目文件。删除后无法从 ModMind 恢复。', confirmLabel: '永久删除 ' + selected.length + ' 个快照', tone: 'danger' })) return
+    if (!isForegroundProject(projectPath)) return
+    setDeletingSnapshotId('__batch__')
+    try {
+      const result = await window.modmind.snapshots.deleteMany(selected.map(snapshot => snapshot.id), projectPath)
+      if (isForegroundProject(projectPath)) { setSnapshots(result.snapshots); setNotice('已删除 ' + result.deletedIds.length + ' 个快照' + (result.failed.length ? '，' + result.failed.length + ' 个未删除' : '')) }
+      return result
+    } finally { if (isForegroundProject(projectPath)) setDeletingSnapshotId('') }
   }
 
   const previewMigration = async (): Promise<void> => {
@@ -4780,8 +5079,12 @@ export default function App(): React.JSX.Element {
     if (diagnosticExporting) return
     setDiagnosticExporting(true)
     try {
-      capturePageSnapshot()
-      const target = await window.modmind.diagnostics.exportLogs([...pageSnapshotsRef.current.values()])
+      const current = capturePageSnapshot()
+      if (current?.state) {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        current.state.imageWorkflows = await Promise.race([imageWorkflowDiagnosticState().catch(error => ({ error: String(error) })), new Promise(resolve => { timer = setTimeout(() => resolve({ status: 'timeout' }), 3000) })]).finally(() => clearTimeout(timer))
+      }
+      const target = await window.modmind.diagnostics.exportLogs([...pageSnapshotsRef.current.values()], diagnosticOptions)
       if (target) setNotice(`诊断日志已导出：${target}`)
     } catch (error) {
       setNotice(`诊断日志导出失败：${errorMessage(error)}`)
@@ -5167,9 +5470,10 @@ export default function App(): React.JSX.Element {
     const query = mappingMemberQuery.trim().toLowerCase()
     return !query || `${member.type} ${Object.values(member.names).join(' ')}`.toLowerCase().includes(query)
   }) ?? []
+  const navigationProject = projectLauncherOpen ? null : project
   const { baseVisibleNavGroups, navLabelMap, navOrderStorageKey, sidebarLayoutStorageKey } = useMemo(
-    () => buildNavigationDefinitions({ project, uiMode, plugins: pluginSnapshot.plugins }),
-    [project, uiMode, pluginSnapshot]
+    () => buildNavigationDefinitions({ project: navigationProject, uiMode, plugins: pluginSnapshot.plugins }),
+    [navigationProject, uiMode, pluginSnapshot]
   )
   const sidebarEditor = useSidebarLayout(sidebarLayoutStorageKey, navOrderStorageKey)
   const sidebarLayout = sidebarEditor.layout
@@ -5473,7 +5777,7 @@ export default function App(): React.JSX.Element {
                   aria-current={view === item.id ? 'page' : undefined}
                   aria-label={`${item.label}${item.id === 'snapshots' && snapshotStorageWarning ? '，备份占用偏大' : ''}`}
                   title={sidebarCollapsed || item.id === 'snapshots' && snapshotStorageWarning ? `${item.label}${item.id === 'snapshots' && snapshotStorageWarning ? '，备份占用偏大' : ''}` : undefined}
-                  onClick={() => { navigateToView(item.id); if (project) setProjectLauncherOpen(false) }}
+                  onClick={() => navigateToView(item.id)}
                   onDragStart={(event) => beginSidebarDrag(event, item, group.groupKey)}
                   onDragOver={(event) => {
                     const dragged = sidebarDragItemRef.current ?? readSidebarDragPayload(event.dataTransfer)
@@ -5525,7 +5829,7 @@ export default function App(): React.JSX.Element {
           </div>
         </aside> : null}
 
-        {!isDetachedWindow && !projectIndependentView && (firstProjectPending || projectLauncherOpen || !project || (uiMode === 'advanced' && Boolean(project.draft))) ? (
+        {!isDetachedWindow && !projectIndependentView && (projectLauncherOpen || !project || (uiMode === 'advanced' && Boolean(project.draft))) ? (
           uiMode === 'beginner' ? <MinimalProjectStart draft={beginnerStartupDraft} onDraftChange={setBeginnerStartupDraft} onStart={() => void startConversationProject()} onCreate={() => setBeginnerStartupDraft('')} onOpen={() => void openProject()} preferences={workbenchAiPreferences} models={beginnerAvailableModels} saving={savingAiPreferences || creatingConversationProject} onModelChange={model => setWorkbenchAiOverride({ ...workbenchAiSelection, model, reasoningLevel: 'auto' })} onReasoningLevelChange={reasoningLevel => setWorkbenchAiOverride({ ...workbenchAiSelection, reasoningLevel })} onReset={() => setWorkbenchAiOverride(undefined)} /> : <ProjectLauncher
             projects={recentProjects.filter((recent) => !recent.draft)}
             onCreate={() => setShowCreate(true)}
@@ -5545,6 +5849,7 @@ export default function App(): React.JSX.Element {
             }}
             onSelect={(recent) => void openRecentProject(recent)}
             onRemove={(recent) => void removeRecentProject(recent)}
+            onDelete={(recent) => void deleteRecentProject(recent)}
             onRename={setRenamingProject}
           />
         ) : (
@@ -5572,7 +5877,10 @@ export default function App(): React.JSX.Element {
               />
             </KeepAliveRoute>
             {project?.kind === 'modpack' ? <KeepAliveRoute key={`modpack-automation:${project.path}`} active={view === 'modpack-automation'}><ModpackToolsWorkspace project={project} section="automation" /></KeepAliveRoute> : null}
-            {project && ['modpack', 'server-plugin'].includes(project.kind ?? '') ? <KeepAliveRoute key={`modpack-server:${project.path}`} active={view === 'modpack-server'}><ModpackToolsWorkspace project={project} section="server" /></KeepAliveRoute> : null}
+            {project && ['modpack', 'server-plugin'].includes(project.kind ?? '') ? <KeepAliveRoute key={`modpack-server:${project.path}`} active={view === 'modpack-server'}>{project.kind === 'server-plugin' && ['paper', 'spigot', 'folia'].includes(project.loader) ? <WorkspaceTabs label="本机测试" sections={[
+                { id: 'server', label: '服务端', render: () => <ModpackToolsWorkspace project={project} section="server" /> },
+                { id: 'background', label: '后台测试', render: () => <BackgroundGamePanel project={project} /> }
+              ]} /> : <ModpackToolsWorkspace project={project} section="server" />}</KeepAliveRoute> : null}
             {view === 'modpack-mod-list' && project?.kind === 'modpack' ? <ModpackModListWorkspace project={project} onOpenModule={(module) => { setProject(module); setView('workspace') }} onDecompile={(jarPath) => { setDecompileJarHandoff(jarPath); setView('decompile') }} /> : null}
             {view === 'modpack-manifest' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="other" inventoryMode onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
             {view === 'modpack-config' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="config" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
@@ -5601,7 +5909,19 @@ export default function App(): React.JSX.Element {
               taskState={beginnerTaskState}
               aiPlan={aiPlan}
               aiTodo={aiTodo}
-              aiTimeline={aiTimeline}
+              aiTimeline={workbenchHistoryBrowse?.timeline ?? aiTimeline}
+              historyPage={workbenchHistoryPageRef.current ? {
+                hasOlder: (workbenchHistoryBrowse?.page ?? workbenchHistoryPageRef.current).nextBefore !== null,
+                hasNewer: Boolean(workbenchHistoryBrowse && workbenchHistoryBrowse.page.end < workbenchHistoryPageRef.current.end),
+                browsing: workbenchHistoryBrowse !== null,
+                windowStart: (workbenchHistoryBrowse?.page ?? workbenchHistoryPageRef.current).start,
+                busy: workbenchHistoryPaging,
+                error: workbenchHistoryPageError,
+                onOlder: () => { void pageWorkbenchHistory('older') },
+                onNewer: () => { void pageWorkbenchHistory('newer') },
+                onLatest: () => { void pageWorkbenchHistory('latest') },
+                onRetry: () => { void pageWorkbenchHistory(workbenchHistoryDirectionRef.current) }
+              } : undefined}
               processingStartedAt={processingStartedAt}
               aiOutputStatus={aiOutputStatus}
               aiRecovery={aiRecovery}
@@ -5609,6 +5929,10 @@ export default function App(): React.JSX.Element {
               activeConversationId={activeWorkbenchConversationId}
               persistenceState={workbenchPersistenceState}
               persistenceMessage={workbenchPersistenceMessage}
+              historyState={workbenchPersistenceState === 'error' ? 'error' : workbenchHistoryState}
+              historyMessage={workbenchPersistenceMessage}
+              onRetryHistory={() => workbenchConversationsLoadedRef.current ? setWorkbenchHistoryRetry(value => value + 1) : setWorkbenchIndexRetry(value => value + 1)}
+              onCancelHistory={() => workbenchHistoryCancelRef.current()}
               onSelectConversation={selectWorkbenchConversation}
               onNewConversation={startWorkbenchConversation}
               onDeleteConversation={(conversationId) => deleteWorkbenchConversation(conversationId)}
@@ -5677,7 +6001,7 @@ export default function App(): React.JSX.Element {
               />
             ))}
 
-            {uiMode === 'advanced' || view === 'image-studio' ? <div className="image-studio-host" hidden={view !== 'image-studio'}><ImageStudioWorkspace visible={view === 'image-studio'} darkMode={settings.darkMode} onOpenSettings={() => setView('settings')} resourceTarget={resourceImageTarget?.projectPath === project?.path ? resourceImageTarget : null} onCloseResource={() => { setResourceImageTarget(null); setView('modpack-resourcepacks') }} /></div> : null}
+            {uiMode === 'advanced' || view === 'image-studio' ? <div className="image-studio-host" hidden={view !== 'image-studio'}><ImageStudioWorkspace scopeId={project?.path ?? 'application'} visible={view === 'image-studio'} darkMode={settings.darkMode} onOpenSettings={() => setView('settings')} resourceTarget={resourceImageTarget?.projectPath === project?.path ? resourceImageTarget : null} onCloseResource={() => { setResourceImageTarget(null); setView('modpack-resourcepacks') }} /></div> : null}
 
             {project ? (
               <KeepAliveRoute key={`blockbench:${project.path}`} active={view === 'blockbench'}>
@@ -5687,15 +6011,16 @@ export default function App(): React.JSX.Element {
               </KeepAliveRoute>
             ) : null}
 
-            {project && project.kind !== 'server-plugin' ? <KeepAliveRoute key={`minecraft:${project.path}`} active={view === 'minecraft'}>{project.kind !== 'modpack' && isJavaLoader(project.loader) ? <WorkspaceTabs label="游戏测试" sections={[
-                { id: 'play', label: '游戏测试', render: () => <MinecraftTestWorkspace projectPath={project.path} beginner={uiMode === 'beginner'} onManageRelationships={() => setView('relationships')} /> },
-                { id: 'checks', label: '自动检查', render: () => <AutomatedTestsPane /> }
+            {project && project.kind !== 'server-plugin' ? <KeepAliveRoute key={`minecraft:${project.path}`} active={view === 'minecraft'}>{isJavaLoader(project.loader) ? <WorkspaceTabs label="游戏测试" sections={[
+                { id: 'play', label: '游戏测试', render: () => <MinecraftTestWorkspace projectPath={project.path} beginner={uiMode === 'beginner'} modpack={project.kind === 'modpack'} onManageRelationships={() => setView('relationships')} /> },
+                { id: 'background', label: '后台测试', render: () => <BackgroundGamePanel project={project} /> },
+                ...(project.kind !== 'modpack' ? [{ id: 'checks', label: '自动检查', render: () => <AutomatedTestsPane /> }] : [])
               ]} /> : <MinecraftTestWorkspace projectPath={project.path} beginner={uiMode === 'beginner'} modpack={project.kind === 'modpack'} onManageRelationships={() => setView('relationships')} />}</KeepAliveRoute> : null}
 
             {view === 'mappings' && project ? (
               <div className="mappings-page">
                 <div className="content-toolbar">
-                  <h1 className="visually-hidden">Minecraft Mappings</h1><span className="toolbar-context">Minecraft {project.minecraftVersion}</span>
+                  <h1 className="visually-hidden">Minecraft 映射表</h1><span className="toolbar-context">Minecraft {project.minecraftVersion}</span>
                   <div className="toolbar-actions">
                     <button className="mapping-source-link" onClick={() => void window.modmind.mappings.openLoaderDocs(project.loader)}><ExternalLink size={13} />{platformLabel(project.loader)} 文档</button>
                     <button className="mapping-source-link" onClick={() => void window.modmind.mappings.openSource(project.minecraftVersion)}><ExternalLink size={13} />mappings.dev</button>
@@ -5729,7 +6054,7 @@ export default function App(): React.JSX.Element {
                         </button>
                       )
                     })}
-                    {!mappingResults.length ? <div className="mapping-empty"><LibraryBig size={24} /><span>查询结果会显示在这里</span></div> : null}
+                    {!mappingResults.length ? <div className="mapping-empty"><GitCompareArrows size={24} /><span>查询结果会显示在这里</span></div> : null}
                   </aside>
                   <section className="mapping-detail">
                     {mappingDetail ? (
@@ -5751,7 +6076,7 @@ export default function App(): React.JSX.Element {
                           ))}
                         </div>
                       </>
-                    ) : <div className="mapping-detail-empty"><LibraryBig size={30} /><h2>选择一个类查看完整映射</h2></div>}
+                    ) : <div className="mapping-detail-empty"><GitCompareArrows size={30} /><h2>选择一个类查看完整映射</h2></div>}
                   </section>
                 </div>
               </div>
@@ -5843,7 +6168,7 @@ export default function App(): React.JSX.Element {
               <div className="standard-page snapshot-page">
                 <div className="content-toolbar">
                   <h1 className="visually-hidden">版本与迁移</h1><span className="toolbar-context">{platformLabel(project.loader)} · {project.minecraftVersion}</span>
-                  <button className="primary-button" onClick={() => void createSnapshot()}><Plus size={16} />创建快照</button>
+                  <button className="primary-button" disabled={creatingSnapshot || Boolean(restoringSnapshotId) || Boolean(deletingSnapshotId) || building || planning || migrationBusy} onClick={() => void createSnapshot()}>{creatingSnapshot ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}创建快照</button>
                 </div>
                 {project.kind === 'server-plugin' ? <ServerPluginMigration project={project} onPlan={value => { setPrompt(value); setView('workspace') }} /> : project.kind !== 'modpack' && (isJavaLoader(project.loader) ? <section className="migration-band">
                   <div className="section-title-row"><h2>迁移目标</h2><span>生成到新目录</span></div>
@@ -5871,33 +6196,20 @@ export default function App(): React.JSX.Element {
                     {snapshotStorageWarning ? <p>{currentSnapshotStorage.incomplete ? '文件过多，统计未完成。' : ''}历史运行数据不会自动删除；可在下方移除不再需要的快照。</p> : null}
                   </> : snapshotStorageError ? <><strong>无法统计备份占用</strong><span>{snapshotStorageError}</span><button className="secondary-button compact" type="button" onClick={() => { setSnapshotStorageError(''); void window.modmind.snapshots.storage(project.path).then(setSnapshotStorage).catch(error => setSnapshotStorageError(errorMessage(error))) }}>重试</button></> : <span>正在统计备份占用…</span>}
                 </div>
-                <div className="snapshot-list">
-                  {snapshots.length ? snapshots.map((snapshot) => (
-                    <article className="snapshot-row" key={snapshot.id}>
-                      <span className="snapshot-icon"><Archive size={18} /></span>
-                      <div><h3>{snapshot.label}</h3><p>{formatDate(snapshot.createdAt)} · {snapshot.fileCount} 个文件</p></div>
-                      <code>{snapshot.id.slice(0, 19)}</code>
-                      <div className="snapshot-actions">
-                        <button
-                          className="icon-button"
-                          title="恢复此快照"
-                          disabled={Boolean(restoringSnapshotId) || Boolean(deletingSnapshotId) || building || planning || migrationBusy}
-                          onClick={() => void restoreSnapshot(snapshot)}
-                        >
-                          {restoringSnapshotId === snapshot.id ? <LoaderCircle className="spin" size={15} /> : <RotateCcw size={15} />}
-                        </button>
-                        <button
-                          className="icon-button danger"
-                          title="删除此快照"
-                          disabled={Boolean(restoringSnapshotId) || Boolean(deletingSnapshotId) || building || planning || migrationBusy}
-                          onClick={() => void deleteSnapshot(snapshot)}
-                        >
-                          {deletingSnapshotId === snapshot.id ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
-                        </button>
-                      </div>
-                    </article>
-                  )) : <div className="large-empty"><History size={26} /><h3>还没有版本快照</h3></div>}
-                </div>
+                <SnapshotList
+                  key={project.path}
+                  snapshots={snapshots}
+                  loading={snapshotListState === 'idle' || snapshotListState === 'loading'}
+                  error={snapshotListError}
+                  onRetry={() => void refreshSnapshots().catch(() => undefined)}
+                  restoringId={restoringSnapshotId}
+                  deletingId={deletingSnapshotId}
+                  disabled={creatingSnapshot || Boolean(restoringSnapshotId) || Boolean(deletingSnapshotId) || building || planning || migrationBusy}
+                  onRestore={snapshot => void restoreSnapshot(snapshot)}
+                  onDelete={snapshot => void deleteSnapshot(snapshot)}
+                  onDeleteMany={deleteSnapshots}
+                  formatDate={formatDate}
+                />
               </div>
             ) : null}
 
@@ -6175,6 +6487,7 @@ export default function App(): React.JSX.Element {
                 <section id="settings-diagnostics" className="settings-section">
                   <div className="settings-heading"><h2>诊断日志</h2></div>
                   <div className="settings-actions"><button className="secondary-button" type="button" disabled={diagnosticExporting} onClick={() => void exportDiagnosticLogs()}>{diagnosticExporting ? <LoaderCircle className="spin" size={16} /> : <Archive size={16} />}导出诊断日志</button></div>
+                  <DiagnosticOptions options={diagnosticOptions} onChange={setDiagnosticOptions} />
                 </section>
                 <section id="settings-appearance" className="settings-section">
                   <AppearanceSettings settings={settings} onSave={saveSettingsPatch} />
@@ -6213,6 +6526,7 @@ export default function App(): React.JSX.Element {
                     </details>
                   </div>
                 </section>
+                <section id="settings-contributions" className="settings-section"><ContributionSettings /></section>
                 <section id="settings-updates" className="settings-section"><AppMaintenanceSettings /></section>
                 <section id="settings-legal" className="settings-section">
                   <div className="settings-heading"><h2>许可证与版权</h2></div>
@@ -6240,7 +6554,7 @@ export default function App(): React.JSX.Element {
       {modJarInspecting ? <ProjectInspectionDialog kind="mod" /> : null}
       {existingAnalysis ? <AdoptProjectDialog analysis={existingAnalysis} onClose={() => setExistingAnalysis(null)} onAdopted={(adopted) => { setExistingAnalysis(null); setProject(adopted); setProjectLauncherOpen(false); setView('workspace'); void refreshRecentProjects() }} /> : null}
       {modJarInspection ? <AdoptModJarDialog inspection={modJarInspection} onClose={() => setModJarInspection(null)} onAdopted={(adopted) => { setModJarInspection(null); setProject(adopted); setProjectLauncherOpen(false); setView('workspace'); void refreshRecentProjects() }} /> : null}
-      {startupChangelogChecked && !changelog && updateInfo ? <div className="modal-backdrop"><div className="dialog update-dialog" role="dialog" aria-modal="true" aria-labelledby="update-dialog-title"><div className="dialog-header"><div><h2 id="update-dialog-title">发现新版本</h2><p>ModMind {updateInfo.latestVersion} 已发布</p></div><CloudUpload size={21} /></div><p className="recovery-copy">当前版本为 {updateInfo.currentVersion}。安装包将在后台下载，期间可以收起下载悬浮窗继续工作。</p><div className="dialog-footer"><button className="secondary-button" disabled={updateActionBusy} onClick={() => setUpdateInfo(null)}>暂不下载</button><button className="primary-button" disabled={updateActionBusy} onClick={downloadAppUpdate}>{updateActionBusy ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}下载更新</button></div></div></div> : null}
+      {startupChangelogChecked && !changelog && updateInfo ? <div className="modal-backdrop"><div className="dialog update-dialog" role="dialog" aria-modal="true" aria-labelledby="update-dialog-title"><div className="dialog-header"><div><h2 id="update-dialog-title">发现新版本</h2><p>ModMind {updateInfo.latestVersion} 已发布</p></div><CloudDownload size={21} /></div><p className="recovery-copy">当前版本为 {updateInfo.currentVersion}。安装包将在后台下载，期间可以收起下载悬浮窗继续工作。</p><div className="dialog-footer"><button className="secondary-button" disabled={updateActionBusy} onClick={() => setUpdateInfo(null)}>暂不下载</button><button className="primary-button" disabled={updateActionBusy} onClick={downloadAppUpdate}>{updateActionBusy ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}下载更新</button></div></div></div> : null}
       {startupChangelogChecked && !changelog && updateDownloadedOpen && appUpdateState.phase === 'downloaded' ? <div className="modal-backdrop"><div className="dialog update-dialog update-ready-dialog" role="dialog" aria-modal="true" aria-labelledby="update-ready-dialog-title"><div className="dialog-header"><div><h2 id="update-ready-dialog-title">更新已下载</h2><p>ModMind {appUpdateState.latestVersion} 已准备好</p></div><PackageOpen size={21} /></div><p className="recovery-copy">安装包已经校验完成。可以立即重启安装；选择稍后时，下次启动 ModMind 会自动进入安装。</p><div className="dialog-footer"><button className="secondary-button" disabled={updateActionBusy} onClick={() => setUpdateDownloadedOpen(false)}>稍后</button><button className="primary-button" disabled={updateActionBusy} onClick={installAppUpdate}>{updateActionBusy ? <LoaderCircle className="spin" size={16} /> : <RotateCcw size={16} />}重启并安装</button></div></div></div> : null}
       {deviceAccountOpen ? <DeviceAccountDialog state={deviceState} remoteState={remoteState} busy={deviceBusy} remoteBusy={remoteBusy} onClose={() => setDeviceAccountOpen(false)} onAuthorize={() => void deviceAuthorize()} onCancel={() => void deviceCancel()} onDisconnect={() => void deviceDisconnect()} onRefresh={() => void deviceRefresh()} onOpenSite={deviceOpenSite} onRemoteToggle={() => void remoteToggle()} /> : null}
       {appDialogRequest ? <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && appDialogRequest.kind === 'info') resolveAppDialog(true) }}><div className="dialog interaction-dialog" role="dialog" aria-modal="true" aria-labelledby="app-dialog-title" aria-describedby="app-dialog-message" onMouseDown={event => event.stopPropagation()}><div className="dialog-header"><div><h2 id="app-dialog-title">{appDialogRequest.title}</h2><p id="app-dialog-message">{appDialogRequest.message}</p>{appDialogRequest.detail ? <p className="interaction-dialog-detail">{appDialogRequest.detail}</p> : null}</div><Info size={20} aria-hidden="true" /></div><div className="dialog-footer">{appDialogRequest.kind === 'confirm' ? <button className="secondary-button" type="button" onClick={() => resolveAppDialog(false)}>{appDialogRequest.cancelLabel ?? '取消'}</button> : null}<button className="primary-button" type="button" onClick={() => resolveAppDialog(true)}>{appDialogRequest.confirmLabel ?? '知道了'}</button></div></div></div> : null}

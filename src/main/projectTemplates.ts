@@ -558,8 +558,7 @@ base {
 
 ${javaConfiguration(javaVersion)}
 minecraft {
-    mappings channel: 'official', version: project.minecraft_version
-    runs {
+${project.minecraftVersion === '26.3' ? '' : "    mappings channel: 'official', version: project.minecraft_version\n"}    runs {
 ${runs}
     }
 }
@@ -793,7 +792,11 @@ export function projectTemplateFiles(project: ProjectInfo, includeStarter = true
   return {
     'modmind.project.json': JSON.stringify({ ...project, projectVersion: CURRENT_PROJECT_VERSION }, null, 2),
     'modmind.template.json': JSON.stringify({
-      source: officialTemplateSources[project.loader],
+      source: project.minecraftVersion === '26.3' && project.loader === 'forge'
+        ? `https://maven.minecraftforge.net/net/minecraftforge/forge/${project.loaderVersion}/forge-${project.loaderVersion}-mdk.zip`
+        : project.minecraftVersion === '26.3' && project.loader === 'neoforge'
+          ? 'https://github.com/NeoForgeMDKs/MDK-26.3-ModDevGradle'
+          : officialTemplateSources[project.loader],
       loader: project.loader,
       minecraftVersion: project.minecraftVersion,
       pluginVersion: compatibility.pluginVersion,

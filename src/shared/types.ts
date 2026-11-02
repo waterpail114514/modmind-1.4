@@ -674,6 +674,12 @@ export interface SnapshotInfo {
   fileCount: number
 }
 
+export interface SnapshotBatchDeleteResult {
+  deletedIds: string[]
+  failed: { id: string; message: string }[]
+  snapshots: SnapshotInfo[]
+}
+
 export interface SnapshotStorageInfo {
   projectPath: string
   snapshotCount: number
@@ -871,6 +877,7 @@ export interface AgentSettings {
   javaPreferences: JavaPreferences
   darkMode: boolean
   themePreset?: import('./appTheme').ThemePreset
+  fontScale?: number
   customThemeColors?: import('./appTheme').CustomThemeColors
   background?: import('./appTheme').AppBackground
   closeBehavior: 'ask' | 'tray' | 'quit'
@@ -1020,9 +1027,12 @@ export interface AiNotice {
 }
 
 export interface AiOutputEvent {
+  activity?: import('./aiActivity').AiActivity
+  reasoning?: AiReasoningUpdate
+  inspirationArtifact?: import('./inspirationSubmission').InspirationArtifact
   inspirationFeatures?: import('./inspirationFeatures').InspirationFeatures
   notice?: AiNotice
-  kind: 'start' | 'stream-start' | 'delta' | 'response' | 'answer' | 'retry' | 'tool' | 'warning' | 'error' | 'usage'
+  kind: 'start' | 'stream-start' | 'delta' | 'response' | 'answer' | 'retry' | 'tool' | 'warning' | 'error' | 'usage' | 'reasoning'
   content: string
   time: string
   sessionId?: string
@@ -1048,7 +1058,22 @@ export interface AiOutputEvent {
   recoverable?: boolean
 }
 
+export type AiReasoningUpdate =
+  | { phase: 'start' }
+  | { phase: 'delta'; channel: 'summary' | 'text'; index: number }
+  | { phase: 'completed'; summary: string[]; text: string[] }
+
+export interface AgentReasoningContent { summary: string[]; text: string[] }
+
 export interface InspirationChatMessage {
+  /** Native text identity; progress never becomes a tool receipt. */
+  itemId?: string
+  streamId?: string
+  phase?: 'commentary' | 'final_answer'
+  activity?: import('./aiActivity').AiActivity
+  reasoning?: AgentReasoningContent
+  reasoningCompleted?: boolean
+  inspirationArtifact?: import('./inspirationSubmission').InspirationArtifact
   /** Selection snapshot for this turn; history never adopts later capability choices. */
   inspirationFeatures?: import('./inspirationFeatures').InspirationFeatures
   generation?: number
@@ -1056,7 +1081,7 @@ export interface InspirationChatMessage {
   usage?: AiTokenUsage
   notice?: AiNotice
   role: 'user' | 'assistant'
-  kind?: 'tool'
+  kind?: 'tool' | 'reasoning'
   id?: string
   time?: string
   sessionId?: string
@@ -1142,8 +1167,31 @@ export interface ConversationCreateInput {
   view?: ConversationDocument['view']
 }
 
+export interface ConversationHistoryPageInput {
+  before?: number
+  after?: number
+  limit?: number
+  token?: string
+  generation?: number
+}
+
+export interface ConversationHistoryPage {
+  document: ConversationDocument
+  items: unknown[]
+  start: number
+  end: number
+  total: number
+  token: string
+  nextBefore: number | null
+  /** Bounded dialogue from rows before the visible window, for provider fallback. */
+  dialoguePrefix?: string
+  writeResult?: WorkbenchDataWriteResult
+}
+
 export interface ConversationForkInput {
   sourceConversationId: string
+  /** For a paged workbench: the host retains the entire prefix, including unloaded rows. */
+  historyItemId?: string
   id?: string
   title?: string
   beforeTurnId?: string
@@ -1266,6 +1314,7 @@ export interface DiagnosticPageSnapshot {
   url: string
   capturedAt: string
   html: string
+  state?: Record<string, unknown>
 }
 
 export type SidebarViewId =
@@ -1460,6 +1509,7 @@ export interface ModMindApi {
     getKeybinds: () => Promise<ModpackKeybindState>
     readLock: () => Promise<unknown>
     auditLock: () => Promise<unknown>
+    manageLock: (operation: 'inspect' | 'repair', projectPath: string) => Promise<import('./modpackLock').ModpackLockResult>
     providers: () => Promise<ModpackProviderInfo[]>
     recommendProviders: () => Promise<ModpackSearchResponse[]>
     recommendMcmod: () => Promise<McmodSearchResult[]>
@@ -1522,6 +1572,7 @@ export interface ModMindApi {
     onStorageChanged: (listener: (status: SnapshotStorageInfo) => void) => () => void
     restore: (id: string, projectPath?: string) => Promise<SnapshotRestoreResult>
     delete: (id: string, projectPath?: string) => Promise<SnapshotInfo[]>
+    deleteMany: (ids: string[], projectPath?: string) => Promise<SnapshotBatchDeleteResult>
   }
   settings: {
     revealSecret: (key: 'codex' | 'image' | 'gitee' | 'modrinthToken' | 'curseForgeToken' | 'githubToken') => Promise<string>
@@ -1535,9 +1586,19 @@ export interface ModMindApi {
     probeJavaHome: (home: string) => Promise<JavaProbeOutcome>
     pickJavaHome: () => Promise<string | null>
   }
+  contributions: {
+    getState: () => Promise<import('./contributions').ContributionState>
+    beginConsent: () => Promise<import('./contributions').ContributionChallenge>
+    enable: (token: string, termsVersion: string) => Promise<import('./contributions').ContributionState>
+    disable: () => Promise<import('./contributions').ContributionState>
+    preview: () => Promise<import('./contributions').ContributionPreview>
+  }
   diagnostics: {
     reportError: (error: import('./diagnostics').DiagnosticErrorPayload, operation?: string) => void
-    exportLogs: (pages?: DiagnosticPageSnapshot[]) => Promise<string | null>
+    reportEvent: (event: import('./diagnostics').DiagnosticUiEvent) => void
+    pickAttachments: () => Promise<import('./diagnostics').DiagnosticAttachment[]>
+    readState: (limit?: number) => Promise<unknown>
+    exportLogs: (pages?: DiagnosticPageSnapshot[], options?: import('./diagnostics').DiagnosticExportOptions) => Promise<string | null>
   }
   device: {
     getState: () => Promise<DeviceConnectionState>
@@ -1584,8 +1645,14 @@ export interface ModMindApi {
   conversations: {
     list: (projectPath: string, surface?: AiSurface, includeArchived?: boolean) => Promise<ConversationSummary[]>
     read: (projectPath: string, conversationId: string) => Promise<ConversationDocument | null>
+    readProjection?: (projectPath: string, conversationId: string) => Promise<ConversationDocument | null>
+    historyPage?: (projectPath: string, conversationId: string, input?: ConversationHistoryPageInput) => Promise<ConversationHistoryPage | null>
+    saveHistoryWindow?: (projectPath: string, conversationId: string, generation: number, token: string, start: number, items: unknown[]) => Promise<ConversationHistoryPage | null>
+    deleteHistoryItem?: (projectPath: string, conversationId: string, generation: number, itemId: string) => Promise<ConversationDocument>
     create: (projectPath: string, input: ConversationCreateInput) => Promise<ConversationDocument>
+    ensureProjection?: (projectPath: string, input: ConversationCreateInput) => Promise<ConversationDocument>
     saveView: (projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view'], title?: string) => Promise<ConversationDocument>
+    saveProjection?: (projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view'], title?: string) => Promise<ConversationDocument>
     replaceView: (projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view']) => Promise<ConversationDocument>
     eventsSince: (projectPath: string, conversationId: string, generation: number, afterSequence?: number, limit?: number) => Promise<ConversationEventsPage>
     fork: (projectPath: string, input: ConversationForkInput) => Promise<ConversationDocument>

@@ -6,7 +6,7 @@
 
 AI 辅助开发 · 模组与整合包 · 资源创作 · 游戏测试
 
-**[官网与客户端下载](https://ether-studio.top/)** · **[GitHub 最新版](https://github.com/waterpail114514/modmind/releases/latest)** · **[更新日志](https://github.com/waterpail114514/modmind/releases)**
+**[官网与客户端下载](https://ether-studio.top/)** · **[GitHub 最新版](https://github.com/waterpail114514/modmind-1.4/releases/latest)** · **[更新日志](https://github.com/waterpail114514/modmind-1.4/releases)**
 
 [功能一览](#功能一览) · [开始使用](#开始使用) · [本地开发](#本地开发) · [文档与社区](#文档与社区)
 
@@ -16,18 +16,25 @@ AI 辅助开发 · 模组与整合包 · 资源创作 · 游戏测试
 
 ModMind 是面向 Minecraft 创作者的桌面工作台。你可以先在灵感台整理想法，再让 AI 协助编写代码、制作资源、处理依赖，并在项目中构建和测试。编辑器、对话、图片、模型、整合包和服务端工具都集中在同一个工作区。
 
-### 1.4.12 更新
+## 1.4 维护版
 
-- 改进模型上下文、自动整理和思考强度设置。
-- 优化额度模型偏好、Agent 工具准备状态和工作台配置。
-- 完善扩展准备与设置界面。
-- 移除 Herobrine。
+当前版本 **1.4.26**。保留内置创作工具与工作台，持续修复现有功能。本次改进长对话分段读取、加载反馈与会话切换；近期维护同时覆盖图像画布、诊断、构建恢复及后台游戏测试。完整记录见应用内更新日志。
+
+## 版本与仓库
+
+| 版本线 | 仓库 | 下载 |
+| --- | --- | --- |
+| 桌面 2.0 预览版 | [modmind](https://github.com/waterpail114514/modmind) | [2.0.0-preview.1](https://github.com/waterpail114514/modmind/releases/tag/2.0.0-preview.1) |
+| 桌面 1.4 维护版 | [modmind-1.4](https://github.com/waterpail114514/modmind-1.4) | [最新维护版](https://github.com/waterpail114514/modmind-1.4/releases/latest) |
+| Android 独立版 | [modmind-mobile](https://github.com/waterpail114514/modmind-mobile) | [1.0.0-preview.1](https://github.com/waterpail114514/modmind-mobile/releases/tag/1.0.0-preview.1) |
+
+三个仓库保留各自开发历史。Android 独立版源码位于 `android-mobile/`，与桌面仓库中的 `android-twa/` 网页壳不同。
 
 ## 开始使用
 
 **[访问官网 ether-studio.top](https://ether-studio.top/)** 即可下载客户端，查看使用流程，并使用账号管理、桌面授权、模型服务接入、额度与用量查询、兑换充值等功能。官网不只是下载页，更多功能可在登录后查看。
 
-也可以从 **[GitHub Releases](https://github.com/waterpail114514/modmind/releases/latest)** 下载。具体版本与更新内容以发布页为准，仓库中的开发版本可能领先于正式版。
+也可以从 **[GitHub Releases](https://github.com/waterpail114514/modmind-1.4/releases/latest)** 下载。具体版本与更新内容以发布页为准，仓库中的开发版本可能领先于正式版。
 
 | 你的设备 | 选择的安装包 |
 | --- | --- |
@@ -79,7 +86,7 @@ Java 模组的真实界面测试实验性接入 [Minecraft Mod MCP](https://gith
 使用 **Node.js 22.12 或更新的受支持版本**。首次克隆后执行：
 
 ```sh
-git clone https://github.com/waterpail114514/modmind.git
+git clone https://github.com/waterpail114514/modmind-1.4.git
 cd modmind
 npm ci
 npm run dev
@@ -117,7 +124,7 @@ npm run build
 | macOS 签名与公证 | `npm run dist:mac` | 对应架构的 Mac，以及 Apple 签名和公证凭据 |
 | Linux | `npm run dist:linux` | 输出 AppImage 和 ZIP |
 
-**没有 Mac 也可以构建。** 在 GitHub Actions 中运行 [Validate macOS](https://github.com/waterpail114514/modmind/actions/workflows/build-macos.yml)，云端会分别构建 arm64 和 x64，执行测试、打包应用启动检查和归档校验。通过后可从运行页面下载附件。
+**没有 Mac 也可以构建。** 在 GitHub Actions 中运行 [Validate macOS](https://github.com/waterpail114514/modmind-1.4/actions/workflows/build-macos.yml)，云端会分别构建 arm64 和 x64，执行测试、打包应用启动检查和归档校验。通过后可从运行页面下载附件。
 
 <details>
 <summary><strong>维护者配置与更新分发</strong></summary>
@@ -151,8 +158,8 @@ Windows 的 `build.win.publish` 明确指定更新源，让普通仓库、Git wo
 | 入口 | 内容 |
 | --- | --- |
 | [ModMind 官网](https://ether-studio.top/) | 客户端下载、使用流程、账号与模型服务 |
-| [发布记录](https://github.com/waterpail114514/modmind/releases) | 安装包、更新日志与校验文件 |
-| [问题反馈](https://github.com/waterpail114514/modmind/issues) | 报告问题与提出建议 |
+| [发布记录](https://github.com/waterpail114514/modmind-1.4/releases) | 安装包、更新日志与校验文件 |
+| [问题反馈](https://github.com/waterpail114514/modmind-1.4/issues) | 报告问题与提出建议 |
 | [插件开发指南](docs/plugin-development.zh-CN.md) | 插件清单、面板、工具与权限 |
 | [真实交互测试说明](docs/minecraft-mcp-integration.zh-CN.md) | 支持范围、测试方式与限制 |
 | [Fabric API 测试策略](docs/fabric-api-test-policy.zh-CN.md) | 测试实例的 API 管理配置 |

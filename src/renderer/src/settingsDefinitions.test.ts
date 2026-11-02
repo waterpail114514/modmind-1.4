@@ -28,8 +28,9 @@ describe('settings definition compatibility', () => {
   it('preserves category and section IDs, order, labels, descriptions and search keywords', () => {
     expect(settingsCategories).toEqual(baseline.settings.categories)
     const originalKeywords = ' 更长上下文 超长上下文 256K 272K 消费'
-    expect(settingsSections.filter(section => section.id !== 'settings-authors').map(section => section.id === 'settings-ai'
-      ? { ...section, keywords: section.keywords.replace(originalKeywords, '') } : section)).toEqual(baseline.settings.sections)
+    expect(settingsSections.filter(section => section.id !== 'settings-authors' && section.id !== 'settings-contributions').map(section => section.id === 'settings-ai'
+      ? { ...section, keywords: section.keywords.replace(originalKeywords, '') } : section.id === 'settings-appearance'
+        ? { ...section, keywords: section.keywords.replace(' 字体大小 字号 缩放 font size zoom', '') } : section)).toEqual(baseline.settings.sections)
   })
 
   it('finds the author credits by name and contribution', () => {

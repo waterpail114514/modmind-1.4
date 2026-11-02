@@ -23,7 +23,7 @@ export function pluginVersionOption(platform: ServerPluginPlatform, version: str
 }
 
 export function bundledPluginVersions(): LoaderVersionOption[] {
-  return PLUGIN_CATALOG_SNAPSHOT.map(([platform, version, api]) => ({ ...pluginVersionOption(platform, version, api), notes: ['离线官方目录快照（2026-09-12）；构建仍需 API 缓存或网络', '尚未完成对应核心的运行验收'] })).sort((a, b) => b.minecraftVersion.localeCompare(a.minecraftVersion, undefined, { numeric: true }))
+  return PLUGIN_CATALOG_SNAPSHOT.map(([platform, version, api]) => ({ ...pluginVersionOption(platform, version, api), notes: [`离线官方目录快照（${version === '26.3' ? '2026-10-19' : '2026-09-12'}）；构建仍需 API 缓存或网络`, '尚未完成对应核心的运行验收'] })).sort((a, b) => b.minecraftVersion.localeCompare(a.minecraftVersion, undefined, { numeric: true }))
 }
 
 export function pluginTemplateFiles(project: ProjectInfo, includeStarter = true): Record<string, string> {

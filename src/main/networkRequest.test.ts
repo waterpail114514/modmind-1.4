@@ -1,6 +1,7 @@
 import { createServer, type Server } from 'node:http'
 import net from 'node:net'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { FormData as UndiciFormData } from 'undici'
 import { fetchTextWithRetry, getNetworkProxyUrl, postJsonWithRetry, proxyDispatcher, setNetworkProxy, retryAfterDelay, networkFetch } from './networkRequest'
 
 let server: Server
@@ -35,6 +36,11 @@ beforeAll(async () => {
       let body = ''
       req.on('data', (chunk: Buffer) => { body += chunk.toString('utf8') })
       req.on('end', () => {
+        if (req.url === '/multipart') {
+          res.writeHead(200, { 'content-type': req.headers['content-type']! })
+          res.end(body)
+          return
+        }
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ echoed: body ? JSON.parse(body) : null }))
       })
@@ -53,6 +59,18 @@ afterAll(async () => {
 })
 
 describe('networkRequest helpers', () => {
+  it.each([['native', FormData], ['undici', UndiciFormData]] as const)('preserves %s multipart fields, repeated files and filenames', async (_name, Form) => {
+    const body = new Form()
+    body.append('prompt', '两张参考图')
+    body.append('image[]', new Blob(['first'], { type: 'image/png' }), 'first.png')
+    body.append('image[]', new Blob(['second'], { type: 'image/png' }), 'second.png')
+    const response = await networkFetch(`http://127.0.0.1:${port}/multipart`, { method: 'POST', body: body as FormData })
+    const result = await response.formData()
+    expect(result.get('prompt')).toBe('两张参考图')
+    const images = result.getAll('image[]') as File[]
+    expect(images.map(image => [image.name, image.type])).toEqual([['first.png', 'image/png'], ['second.png', 'image/png']])
+    expect(await Promise.all(images.map(image => image.text()))).toEqual(['first', 'second'])
+  })
   it('preserves POST bodies for 307 redirects and switches to GET for 303', async () => {
     expect(await postJsonWithRetry<{ echoed: unknown }>(`http://127.0.0.1:${port}/redirect-307`, { probe: true })).toEqual({ echoed: { probe: true } })
     expect(await fetchTextWithRetry(`http://127.0.0.1:${port}/redirect-303`, { method: 'POST' }, '{"probe":true}')).toBe('fine for /echo')

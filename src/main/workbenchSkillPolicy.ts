@@ -3,6 +3,7 @@ import { isJavaLoader } from '../shared/projectPlatform'
 
 /** Short routing metadata only; skill bodies are read by the agent on demand. */
 export const WORKBENCH_SKILL_ROUTES = [
+  ['modmind-inspiration', '灵感台讨论需求、整理执行提示词、确认项目知识或提出关键选择；通过结果提交工具生成产物，不用于实施代码、构建或测试。'],
   ['minecraft-netease-development', '开发、修复或打包网易 PC/手游 Python Mod SDK 项目，涉及事件、入口、持久化、UI 或平台导出时使用；简单文案修改不默认读取。'],
   ['minecraft-server-plugin-development', '开发、迁移、修复或验收 Paper/Spigot/Folia/Velocity 服务端插件；编写高频事件、定时任务、I/O 或多人效果时按需读取性能设计规则，兼顾生命周期、线程调度与资源清理；不用于 ModMind 应用扩展或 Fabric/Forge Mod。'],
   ['minecraft-mod-development', '实现 Java Mod 的物品、方块、实体、界面、网络、世界生成等功能，包括整合包内置或关联自制模组的源码开发；纯问答、专项修复或迁移不默认叠加此 skill。'],
@@ -21,8 +22,10 @@ export const WORKBENCH_SKILL_ROUTES = [
   ['modmind-plugin-development', '开发或修复 ModMind 应用插件的清单、面板、后端、宿主消息或 MCP 工具；制作面板或悬浮界面时读取其界面设计规范并复用模板主题与控件；不用于 Minecraft Mod、Blockbench 插件或其他软件插件。']
 ] as const
 
-export function workbenchSkillNames(project?: ProjectInfo): string[] | undefined {
-  if (project?.draft) return undefined
+export function workbenchSkillNames(project?: ProjectInfo, inspiration = false): string[] | undefined {
+  if (inspiration) return ['modmind-inspiration']
+  const codingSkills = (): string[] => WORKBENCH_SKILL_ROUTES.filter(([name]) => name !== 'modmind-inspiration').map(([name]) => name)
+  if (project?.draft) return codingSkills()
   if (project?.kind === 'modpack') return [
     'minecraft-modpack-authoring', 'minecraft-modpack-migration', 'minecraft-server-pack-testing',
     'minecraft-content-assets', 'modmind-image-assets', 'headless-minecraft-testing', 'minecraft-release'
@@ -31,7 +34,7 @@ export function workbenchSkillNames(project?: ProjectInfo): string[] | undefined
     'minecraft-mod-development', 'minecraft-addon-development', 'minecraft-build-repair', 'minecraft-version-migration',
     'minecraft-content-assets', 'minecraft-sound-authoring', 'modmind-blockbench-modeling', 'modmind-image-assets', 'headless-minecraft-testing', 'minecraft-release'
   ]
-  return undefined
+  return codingSkills()
 }
 
 export const WORKBENCH_SKILL_POLICY = `工作台按需执行规则：

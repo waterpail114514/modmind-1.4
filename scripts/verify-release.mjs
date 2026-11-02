@@ -4,6 +4,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { verifyInstallerGradleWrapper } from './verify-gradle-wrapper.mjs'
 import { verifyInstallerUpdateConfig } from './verify-update-config.mjs'
+import { verifyInstallerFfmpeg } from './verify-ffmpeg.mjs'
 
 const platformIndex = process.argv.indexOf('--platform')
 if (process.platform === 'darwin' || (platformIndex >= 0 && process.argv[platformIndex + 1] === 'mac')) {
@@ -35,7 +36,8 @@ for (const file of artifacts) {
   }
   const updateConfig = verifyInstallerUpdateConfig(file, serviceConfig.updateUrl)
   const gradleWrapper = verifyInstallerGradleWrapper(file)
-  results.push({ file, size: stat.size, hash: await sha256(file), updateConfig, gradleWrapper })
+  const ffmpeg = await verifyInstallerFfmpeg(root, file)
+  results.push({ file, size: stat.size, hash: await sha256(file), updateConfig, gradleWrapper, ffmpeg })
 }
 
 if (process.platform === 'win32') {

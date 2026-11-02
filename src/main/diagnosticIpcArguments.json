@@ -1,0 +1,1104 @@
+{
+  "advanced-asset:apply": [
+    "program",
+    "variantId",
+    "expectedRevision"
+  ],
+  "advanced-asset:compile": [
+    "program",
+    "variantId"
+  ],
+  "advanced-asset:preview": [
+    "program",
+    "request",
+    "options",
+    "expectedRevision"
+  ],
+  "ai:cancelCode": [
+    "sessionId",
+    "projectPath"
+  ],
+  "ai:createCode": [
+    "prompt",
+    "sessionId",
+    "backend",
+    "executionProfile",
+    "options"
+  ],
+  "ai:getProjectTaskState": [
+    "projectPath"
+  ],
+  "ai:getRecovery": [
+    "projectPath"
+  ],
+  "ai:importAttachments": [
+    "sources",
+    "projectPath"
+  ],
+  "ai:pickAttachments": [
+    "kind",
+    "projectPath"
+  ],
+  "ai:respondApproval": [
+    "id",
+    "decision"
+  ],
+  "ai:resumeRecovery": [
+    "projectPath",
+    "conversationId",
+    "features"
+  ],
+  "ai:switchBackend": [
+    "requestedBackend",
+    "projectPath",
+    "sessionScope",
+    "switchId"
+  ],
+  "ai:validateAttachments": [
+    "attachments",
+    "projectPath"
+  ],
+  "ai:verifyImageInput": [
+    "backend",
+    "model"
+  ],
+  "app:reinstallLatest": [
+    "confirmed"
+  ],
+  "app:resolveDialog": [
+    "requestId",
+    "confirmed"
+  ],
+  "asset-intent:apply": [
+    "intent",
+    "expectedRevision"
+  ],
+  "asset-intent:compile": [
+    "intent"
+  ],
+  "asset-intent:preview": [
+    "intent",
+    "request",
+    "expectedRevision"
+  ],
+  "asset-refinement:apply": [
+    "refinement",
+    "expectedRevision"
+  ],
+  "asset-refinement:compile": [
+    "refinement"
+  ],
+  "asset-refinement:preview": [
+    "refinement",
+    "request",
+    "expectedRevision"
+  ],
+  "asset-visual-review:current": [
+    "request"
+  ],
+  "beginner-codex:prepare": [
+    "projectPath"
+  ],
+  "blockbench:captureViews": [
+    "request"
+  ],
+  "blockbench:createCheckpoint": [
+    "label"
+  ],
+  "blockbench:execute": [
+    "action"
+  ],
+  "blockbench:executeActions": [
+    "actions",
+    "expectedRevision"
+  ],
+  "blockbench:restoreHistory": [
+    "id"
+  ],
+  "blockbench:runAction": [
+    "action"
+  ],
+  "blockbench:saveAssetBundle": [
+    "request"
+  ],
+  "blockbench:setAssetMetadata": [
+    "metadata"
+  ],
+  "blockbench:setTheme": [
+    "theme",
+    "preset",
+    "custom"
+  ],
+  "blockbench:show": [
+    "bounds"
+  ],
+  "build:preflight": [
+    "projectPath"
+  ],
+  "content:create": [
+    "input"
+  ],
+  "content:importAudio": [
+    "input"
+  ],
+  "conversations:archive": [
+    "projectPath",
+    "conversationId",
+    "archived"
+  ],
+  "conversations:create": [
+    "projectPath",
+    "input"
+  ],
+  "conversations:delete": [
+    "projectPath",
+    "conversationId"
+  ],
+  "conversations:deleteHistoryItem": [
+    "projectPath",
+    "conversationId",
+    "generation",
+    "itemId"
+  ],
+  "conversations:ensureProjection": [
+    "projectPath",
+    "input"
+  ],
+  "conversations:eventsSince": [
+    "projectPath",
+    "conversationId",
+    "generation",
+    "afterSequence",
+    "limit"
+  ],
+  "conversations:fork": [
+    "projectPath",
+    "input"
+  ],
+  "conversations:generateTitle": [
+    "projectPath",
+    "conversationId",
+    "userText",
+    "answer",
+    "backend",
+    "modelSelection"
+  ],
+  "conversations:historyPage": [
+    "projectPath",
+    "conversationId",
+    "input"
+  ],
+  "conversations:list": [
+    "projectPath",
+    "surface",
+    "includeArchived"
+  ],
+  "conversations:pin": [
+    "projectPath",
+    "conversationId",
+    "pinned"
+  ],
+  "conversations:read": [
+    "projectPath",
+    "conversationId"
+  ],
+  "conversations:readProjection": [
+    "projectPath",
+    "conversationId"
+  ],
+  "conversations:rename": [
+    "projectPath",
+    "conversationId",
+    "title"
+  ],
+  "conversations:replaceView": [
+    "projectPath",
+    "conversationId",
+    "generation",
+    "view"
+  ],
+  "conversations:saveHistoryWindow": [
+    "projectPath",
+    "conversationId",
+    "generation",
+    "token",
+    "start",
+    "items"
+  ],
+  "conversations:saveProjection": [
+    "projectPath",
+    "conversationId",
+    "generation",
+    "view",
+    "title"
+  ],
+  "conversations:saveView": [
+    "projectPath",
+    "conversationId",
+    "generation",
+    "view",
+    "title"
+  ],
+  "decompile:cancel": [
+    "jarPath"
+  ],
+  "decompile:createModuleFromJar": [
+    "input"
+  ],
+  "decompile:createProjectFromJar": [
+    "input"
+  ],
+  "decompile:getTerms": [
+    "sourceFileName"
+  ],
+  "decompile:inspect": [
+    "jarPath"
+  ],
+  "decompile:listFiles": [
+    "sourceSha256"
+  ],
+  "decompile:readFile": [
+    "sourceSha256",
+    "relativePath"
+  ],
+  "decompile:scanReferences": [
+    "jarPath",
+    "knownPackages"
+  ],
+  "decompile:start": [
+    "input"
+  ],
+  "dependencies:install": [
+    "input"
+  ],
+  "dependencies:installMaven": [
+    "input"
+  ],
+  "dependencies:remove": [
+    "projectId"
+  ],
+  "dependencies:search": [
+    "query",
+    "offset"
+  ],
+  "dependencies:versions": [
+    "projectId"
+  ],
+  "device:listModels": [
+    "force"
+  ],
+  "device:openSite": [
+    "relativePath"
+  ],
+  "device:saveAiPreferences": [
+    "preferences"
+  ],
+  "diagnostics:exportLogs": [
+    "input",
+    "options"
+  ],
+  "diagnostics:readState": [
+    "limit"
+  ],
+  "downloads:cancel": [
+    "id"
+  ],
+  "downloads:dismiss": [
+    "id"
+  ],
+  "downloads:restart": [
+    "id"
+  ],
+  "downloads:retry": [
+    "id"
+  ],
+  "external-agents:configure": [
+    "kind",
+    "configuration"
+  ],
+  "external-agents:history": [
+    "kind"
+  ],
+  "external-agents:install": [
+    "kind"
+  ],
+  "external-agents:launch": [
+    "kind"
+  ],
+  "external-agents:openDocs": [
+    "kind"
+  ],
+  "git:addRemote": [
+    "name",
+    "url"
+  ],
+  "git:commit": [
+    "input"
+  ],
+  "git:createBranch": [
+    "name"
+  ],
+  "git:diff": [
+    "relativePath"
+  ],
+  "git:fetch": [
+    "remote"
+  ],
+  "git:merge": [
+    "branch"
+  ],
+  "git:pull": [
+    "remote",
+    "branch"
+  ],
+  "git:pullRequestUrl": [
+    "remote"
+  ],
+  "git:push": [
+    "remote",
+    "branch"
+  ],
+  "git:rebase": [
+    "branch"
+  ],
+  "git:removeRemote": [
+    "name"
+  ],
+  "image-studio:generate": [
+    "value"
+  ],
+  "image-studio:process": [
+    "operation",
+    "dataUrl",
+    "options"
+  ],
+  "image-studio:saveAsset": [
+    "dataUrl",
+    "suggestedName"
+  ],
+  "image-studio:saveSettings": [
+    "value"
+  ],
+  "image-studio:saveToProject": [
+    "dataUrl",
+    "suggestedName"
+  ],
+  "inspiration:commitWorkflow": [
+    "projectPath",
+    "identity",
+    "edits",
+    "undo"
+  ],
+  "inspiration:listModels": [
+    "backend"
+  ],
+  "inspiration:readEvidence": [
+    "projectPath",
+    "input"
+  ],
+  "inspiration:readKnowledge": [
+    "projectPath"
+  ],
+  "inspiration:readWorkflow": [
+    "projectPath",
+    "identity"
+  ],
+  "inspiration:updateKnowledge": [
+    "projectPath",
+    "input"
+  ],
+  "itemEditor:catalog": [
+    "projectPath"
+  ],
+  "itemEditor:importTexture": [
+    "projectPath"
+  ],
+  "itemEditor:list": [
+    "projectPath"
+  ],
+  "itemEditor:remove": [
+    "projectPath",
+    "id",
+    "revision"
+  ],
+  "itemEditor:save": [
+    "projectPath",
+    "input"
+  ],
+  "local-test:start": [
+    "options"
+  ],
+  "mappings:getClass": [
+    "version",
+    "className",
+    "memberQuery"
+  ],
+  "mappings:openLoaderDocs": [
+    "loader"
+  ],
+  "mappings:openSource": [
+    "version"
+  ],
+  "mappings:search": [
+    "version",
+    "query",
+    "limit"
+  ],
+  "mcp-bridge:setEnabled": [
+    "enabled"
+  ],
+  "minecraft:buildProject": [
+    "projectPath"
+  ],
+  "minecraft:launch": [
+    "options"
+  ],
+  "minecraft:playerTest": [
+    "projectPath",
+    "category",
+    "input"
+  ],
+  "minecraft:removeMod": [
+    "name"
+  ],
+  "minecraft:testLaunch": [
+    "options"
+  ],
+  "modpack:applyKeybindPreset": [
+    "input",
+    "allowConflicts"
+  ],
+  "modpack:applyOptimizationProfile": [
+    "input"
+  ],
+  "modpack:applyPlan": [
+    "input"
+  ],
+  "modpack:beginMcmodDownload": [
+    "projectId",
+    "fileKey"
+  ],
+  "modpack:buildServerPack": [
+    "input"
+  ],
+  "modpack:configModIdentities": [
+    "projectPath"
+  ],
+  "modpack:contentFeatures": [
+    "projectPath"
+  ],
+  "modpack:contentProjectPath": [
+    "contentPath"
+  ],
+  "modpack:createMigration": [
+    "input"
+  ],
+  "modpack:createModule": [
+    "value"
+  ],
+  "modpack:downloadContent": [
+    "input"
+  ],
+  "modpack:ftbQuestDependencyTexture": [
+    "projectPath"
+  ],
+  "modpack:ftbQuestIcon": [
+    "input",
+    "projectPath"
+  ],
+  "modpack:ftbQuestItemNames": [
+    "itemIds",
+    "projectPath"
+  ],
+  "modpack:ftbQuestShapes": [
+    "projectPath"
+  ],
+  "modpack:importContent": [
+    "kind",
+    "scope"
+  ],
+  "modpack:importModule": [
+    "mode"
+  ],
+  "modpack:inspectFtbQuestIcon": [
+    "input",
+    "projectPath",
+    "remote"
+  ],
+  "modpack:installProviderFile": [
+    "rawProvider",
+    "rawProjectId",
+    "rawVersionId"
+  ],
+  "modpack:installServerRuntime": [
+    "input"
+  ],
+  "modpack:listContent": [
+    "refresh"
+  ],
+  "modpack:listFtbQuestBackups": [
+    "projectPath"
+  ],
+  "modpack:listMcmodFiles": [
+    "projectId"
+  ],
+  "modpack:listProviderFiles": [
+    "rawProvider",
+    "rawProjectId"
+  ],
+  "modpack:manageLock": [
+    "input",
+    "expectedProjectPath"
+  ],
+  "modpack:openModule": [
+    "namespace"
+  ],
+  "modpack:plan": [
+    "input"
+  ],
+  "modpack:previewMigration": [
+    "input"
+  ],
+  "modpack:readFtbQuestBook": [
+    "projectPath"
+  ],
+  "modpack:refreshFtbQuestResources": [
+    "projectPath",
+    "input"
+  ],
+  "modpack:refreshMcmodCaptcha": [
+    "sessionId"
+  ],
+  "modpack:removeContent": [
+    "id"
+  ],
+  "modpack:removeMod": [
+    "fileName"
+  ],
+  "modpack:removeModule": [
+    "namespace"
+  ],
+  "modpack:removeScenarioJar": [
+    "file"
+  ],
+  "modpack:removeServerPackMod": [
+    "fileName"
+  ],
+  "modpack:restartServer": [
+    "input"
+  ],
+  "modpack:restoreFtbQuestBackup": [
+    "projectPath",
+    "id",
+    "baseline"
+  ],
+  "modpack:runServerScenario": [
+    "input"
+  ],
+  "modpack:saveFtbQuestBook": [
+    "input",
+    "projectPath"
+  ],
+  "modpack:searchMcmod": [
+    "query"
+  ],
+  "modpack:searchProviders": [
+    "rawQuery",
+    "rawProviders"
+  ],
+  "modpack:selectMigrationJar": [
+    "input"
+  ],
+  "modpack:sendServerCommand": [
+    "command"
+  ],
+  "modpack:startServer": [
+    "input"
+  ],
+  "modpack:submitMcmodCaptcha": [
+    "sessionId",
+    "captcha"
+  ],
+  "modpack:undoMigration": [
+    "migrationId"
+  ],
+  "modpack:updateModuleSide": [
+    "namespace",
+    "side"
+  ],
+  "modpack:verifyServerJoin": [
+    "input"
+  ],
+  "modpack:writeFtbQuest": [
+    "input"
+  ],
+  "modpack:writePatchouliBook": [
+    "input"
+  ],
+  "plugins:activate": [
+    "pluginId"
+  ],
+  "plugins:clearDiagnostics": [
+    "pluginId"
+  ],
+  "plugins:closeOverlayWindow": [
+    "pluginId"
+  ],
+  "plugins:copyToClipboard": [
+    "pluginId",
+    "text"
+  ],
+  "plugins:delete": [
+    "pluginId"
+  ],
+  "plugins:diagnostics": [
+    "pluginId"
+  ],
+  "plugins:export": [
+    "pluginId"
+  ],
+  "plugins:exportDoc": [
+    "content"
+  ],
+  "plugins:getProjectInfo": [
+    "pluginId"
+  ],
+  "plugins:handleContextOp": [
+    "pluginId",
+    "op",
+    "args"
+  ],
+  "plugins:importZip": [
+    "scope",
+    "requestId"
+  ],
+  "plugins:invokeTool": [
+    "pluginId",
+    "toolName",
+    "input"
+  ],
+  "plugins:openOverlayWindow": [
+    "pluginId"
+  ],
+  "plugins:recordLog": [
+    "pluginId",
+    "source",
+    "level",
+    "message"
+  ],
+  "plugins:restart": [
+    "pluginId"
+  ],
+  "plugins:setEnabled": [
+    "pluginId",
+    "enabled"
+  ],
+  "plugins:setOverlayAlwaysOnTop": [
+    "pluginId",
+    "alwaysOnTop"
+  ],
+  "plugins:setOverlayVisible": [
+    "pluginId",
+    "visible"
+  ],
+  "project:adoptExisting": [
+    "input"
+  ],
+  "project:captureIdea": [
+    "prompt",
+    "projectPath"
+  ],
+  "project:create": [
+    "input"
+  ],
+  "project:createDirectory": [
+    "relativePath",
+    "projectPath"
+  ],
+  "project:createDraft": [
+    "message"
+  ],
+  "project:createFile": [
+    "relativePath",
+    "content",
+    "projectPath"
+  ],
+  "project:delete": [
+    "projectPath"
+  ],
+  "project:deletePath": [
+    "relativePath",
+    "projectPath"
+  ],
+  "project:deletePathPermanent": [
+    "relativePath",
+    "projectPath"
+  ],
+  "project:deletePermanent": [
+    "projectPath"
+  ],
+  "project:deleteWorkbenchData": [
+    "relativePath",
+    "projectPath"
+  ],
+  "project:hasExportArtifact": [
+    "projectPath"
+  ],
+  "project:initializeDraft": [
+    "projectPath",
+    "backend",
+    "modelSelection"
+  ],
+  "project:inspectExisting": [
+    "sourceType"
+  ],
+  "project:listFiles": [
+    "projectPath"
+  ],
+  "project:listLoaderVersions": [
+    "refresh"
+  ],
+  "project:migrate": [
+    "input"
+  ],
+  "project:openRecent": [
+    "projectPath"
+  ],
+  "project:previewMigration": [
+    "input"
+  ],
+  "project:readFile": [
+    "relativePath",
+    "projectPath"
+  ],
+  "project:readImageAsset": [
+    "relativePath",
+    "projectPath"
+  ],
+  "project:readModelAsset": [
+    "relativePath",
+    "projectPath"
+  ],
+  "project:readWorkbenchData": [
+    "relativePath",
+    "projectPath"
+  ],
+  "project:recordDraftMessage": [
+    "message",
+    "projectPath"
+  ],
+  "project:removeRecent": [
+    "projectPath"
+  ],
+  "project:rename": [
+    "input"
+  ],
+  "project:renamePath": [
+    "from",
+    "to",
+    "projectPath"
+  ],
+  "project:reveal": [
+    "relativePath",
+    "projectPath"
+  ],
+  "project:writeFile": [
+    "relativePath",
+    "content",
+    "projectPath"
+  ],
+  "project:writeWorkbenchData": [
+    "relativePath",
+    "content",
+    "projectPath"
+  ],
+  "reference-asset:apply": [
+    "program",
+    "expectedRevision"
+  ],
+  "reference-asset:compile": [
+    "program"
+  ],
+  "reference-asset:preview": [
+    "program",
+    "request",
+    "expectedRevision"
+  ],
+  "relationships:beginMcmodDownload": [
+    "projectId",
+    "fileKey"
+  ],
+  "relationships:cancelImport": [
+    "batchId"
+  ],
+  "relationships:confirmImport": [
+    "batchId",
+    "selections"
+  ],
+  "relationships:importSource": [
+    "relationshipId",
+    "sourceType"
+  ],
+  "relationships:installPlatform": [
+    "input"
+  ],
+  "relationships:prepare": [
+    "input"
+  ],
+  "relationships:refreshMcmodCaptcha": [
+    "sessionId"
+  ],
+  "relationships:remove": [
+    "relationshipId"
+  ],
+  "relationships:search": [
+    "query",
+    "providers"
+  ],
+  "relationships:setRole": [
+    "relationshipId",
+    "role"
+  ],
+  "relationships:submitMcmodCaptcha": [
+    "sessionId",
+    "captcha",
+    "role"
+  ],
+  "relationships:versions": [
+    "provider",
+    "projectId"
+  ],
+  "release:publish": [
+    "input"
+  ],
+  "release:saveSettings": [
+    "settings"
+  ],
+  "remote-build:gitee:saveSettings": [
+    "settings"
+  ],
+  "remote-build:gitee:validate": [
+    "settings"
+  ],
+  "resource-packs:create": [
+    "root",
+    "input"
+  ],
+  "resource-packs:deploy": [
+    "root",
+    "id"
+  ],
+  "resource-packs:export": [
+    "root",
+    "id"
+  ],
+  "resource-packs:import": [
+    "root",
+    "directory"
+  ],
+  "resource-packs:importAssets": [
+    "root",
+    "id",
+    "directory"
+  ],
+  "resource-packs:list": [
+    "root"
+  ],
+  "resource-packs:makeEditable": [
+    "root",
+    "id"
+  ],
+  "resource-packs:openModel": [
+    "root",
+    "id",
+    "file"
+  ],
+  "resource-packs:previewModel": [
+    "root",
+    "id",
+    "file"
+  ],
+  "resource-packs:read": [
+    "root",
+    "id",
+    "file"
+  ],
+  "resource-packs:removeFile": [
+    "root",
+    "id",
+    "file",
+    "baseline"
+  ],
+  "resource-packs:saveModel": [
+    "target"
+  ],
+  "resource-packs:thumbnail": [
+    "root",
+    "id",
+    "file"
+  ],
+  "resource-packs:validate": [
+    "root",
+    "id"
+  ],
+  "resource-packs:write": [
+    "root",
+    "id",
+    "file",
+    "content",
+    "baseline"
+  ],
+  "server-plugin:builds": [
+    "core",
+    "version"
+  ],
+  "server-plugin:dependencies": [
+    "root"
+  ],
+  "server-plugin:dependencyVersions": [
+    "root",
+    "id"
+  ],
+  "server-plugin:downloadDependency": [
+    "root",
+    "id"
+  ],
+  "server-plugin:importCore": [
+    "root"
+  ],
+  "server-plugin:importDependencies": [
+    "root"
+  ],
+  "server-plugin:inspect": [
+    "root"
+  ],
+  "server-plugin:profile": [
+    "root"
+  ],
+  "server-plugin:removeDependency": [
+    "root",
+    "file"
+  ],
+  "server-plugin:saveProfile": [
+    "root",
+    "profile"
+  ],
+  "server-plugin:search": [
+    "root",
+    "query"
+  ],
+  "server-plugin:versions": [
+    "core"
+  ],
+  "settings:listAgentModels": [
+    "kind",
+    "configuration"
+  ],
+  "settings:probeJavaHome": [
+    "home"
+  ],
+  "settings:revealSecret": [
+    "key"
+  ],
+  "settings:saveAgent": [
+    "settings"
+  ],
+  "snapshots:create": [
+    "label",
+    "projectPath"
+  ],
+  "snapshots:delete": [
+    "id",
+    "projectPath"
+  ],
+  "snapshots:deleteMany": [
+    "ids",
+    "projectPath"
+  ],
+  "snapshots:list": [
+    "projectPath"
+  ],
+  "snapshots:restore": [
+    "id",
+    "projectPath"
+  ],
+  "snapshots:storage": [
+    "projectPath"
+  ],
+  "sounds:addFolder": [
+    "root",
+    "minecraft"
+  ],
+  "sounds:cancel": [
+    "root"
+  ],
+  "sounds:clearCache": [
+    "root"
+  ],
+  "sounds:exportMidi": [
+    "root",
+    "value"
+  ],
+  "sounds:fetchVanilla": [
+    "root"
+  ],
+  "sounds:import": [
+    "root",
+    "input"
+  ],
+  "sounds:list": [
+    "root",
+    "refresh"
+  ],
+  "sounds:preview": [
+    "root",
+    "id",
+    "download"
+  ],
+  "sounds:process": [
+    "root",
+    "input"
+  ],
+  "sounds:readDraft": [
+    "root"
+  ],
+  "sounds:removeFolder": [
+    "root",
+    "id"
+  ],
+  "sounds:renderEffect": [
+    "root",
+    "draft"
+  ],
+  "sounds:saveDraft": [
+    "root",
+    "value"
+  ],
+  "sounds:saveEvent": [
+    "root",
+    "input"
+  ],
+  "sounds:saveRendered": [
+    "root",
+    "id",
+    "bytes",
+    "stream"
+  ],
+  "sounds:undo": [
+    "root"
+  ],
+  "tests:runMatrix": [
+    "targets"
+  ],
+  "window:openDetached": [
+    "view",
+    "title"
+  ],
+  "window:resolveClose": [
+    "choice",
+    "remember"
+  ],
+  "window:setDetachedAlwaysOnTop": [
+    "alwaysOnTop"
+  ]
+}

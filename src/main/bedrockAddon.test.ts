@@ -72,8 +72,10 @@ describe('Bedrock and NetEase addon templates', () => {
       const build = loader === 'bedrock' ? buildBedrockAddon : buildNeteaseArchive
       await expect(build({ ...info, namespace: '../../outside/existing' })).rejects.toThrow(/namespace/)
       await fs.symlink(outside, path.join(projectRoot, 'build'), process.platform === 'win32' ? 'junction' : 'dir')
-      await expect(build(info)).rejects.toThrow(/link/)
-      expect(await fs.readdir(outside)).toEqual([])
+      try {
+        await expect(build(info)).rejects.toThrow(/link/)
+        expect(await fs.readdir(outside)).toEqual([])
+      } finally { await fs.unlink(path.join(projectRoot, 'build')) }
     } finally { await fs.rm(root, { recursive: true, force: true }) }
   })
   it('resolves nested snake-case entrypoints and exports only clean compressed game packs', async () => {

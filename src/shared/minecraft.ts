@@ -124,6 +124,7 @@ export interface MinecraftLaunchOptions {
   withoutProjectMod?: boolean
   disableNarrator?: boolean
   extraJVMArgs?: string[]
+  backgroundControl?: boolean
   server?: { ip: string; port: number }
 }
 
@@ -175,6 +176,7 @@ export interface GradleVerificationResult {
 }
 
 export interface MinecraftApi {
+  playerTest: (projectPath: string, category: 'session' | 'observe' | 'action' | 'capture' | 'scenario', input: Record<string, unknown>) => Promise<unknown>
   getState: () => Promise<MinecraftRuntimeState>
   prepare: () => Promise<MinecraftRuntimeState>
   cancelPreparation: () => Promise<MinecraftRuntimeState>

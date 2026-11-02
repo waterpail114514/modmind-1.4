@@ -29,14 +29,23 @@ ui-check*.jpg
 !/docs/fabric-api-test-policy.zh-CN.md
 !/docs/creation-experience-development-plan.zh-CN.md
 !/docs/minecraft-mcp-integration.zh-CN.md
+!/docs/minecraft-26.3-support.zh-CN.md
 /modmind-mcp-open-source/
 /resources/server-pack-creator/.parts/
 /resources/server-pack-creator/*.partial
 
 # Local development artifacts
+!/docs/contribution-statistics.zh-CN.md
+/test-results/contribution-backport/
+/test-results/contribution-ui/
+/test-results/contribution-live/
+/test-results/contribution-*.log
 /video-assets/
 /scripts/inspect-loader-ui.mjs
 /scripts/inspect-production-ui.mjs
 /scripts/restore-timeline.py
 /scripts/smoke-loader-templates.ts
 /scripts/smoke-packaged-app.mjs
+
+/dist-x1/
+/.audit-sandboxes/

@@ -16,14 +16,13 @@ export default function InspirationWorkflowReply({ message, features, projectPat
   onSend: (text: string) => void; onHandoff: (text: string) => void; onEdit: (text: string | undefined) => void; onSource: (href: string) => void
   onCollect: (text: string) => void
 }): React.JSX.Element {
-  const [displayText, setDisplayText] = useState(message.content)
-  useEffect(() => {
-    if (message.status !== 'streaming') { setDisplayText(message.content); return }
-    const frame = requestAnimationFrame(() => setDisplayText(message.content))
-    return () => cancelAnimationFrame(frame)
-  }, [message.content, message.status])
+  const displayText = message.content
   const selection = message.inspirationFeatures ?? features
-  const preview = useMemo(() => parseInspirationWorkflow(displayText, selection), [displayText, selection])
+  const preview = useMemo(() => message.inspirationArtifact ? {
+    protocol: true, complete: message.inspirationArtifact.finalized, reply: displayText,
+    promptText: message.inspirationArtifact.workflow.prompt?.text ?? '', candidates: message.inspirationArtifact.workflow.knowledgeCandidates,
+    value: message.inspirationArtifact.workflow, error: undefined
+  } : parseInspirationWorkflow(displayText, selection), [displayText, selection, message.inspirationArtifact])
   const complete = preview.complete && message.isFinal && message.status === 'completed'
   const [editing, setEditing] = useState(false)
   const [edited, setEdited] = useState(message.promptEdit ?? '')
@@ -59,13 +58,13 @@ export default function InspirationWorkflowReply({ message, features, projectPat
       if (refreshed) setRecord(refreshed)
     } finally { setKnowledgeBusy(false) }
   }
-  if (!preview.protocol) return <><ReplyMarkdown content={splitInspirationFollowups(displayText).content} onSource={onSource} />{message.inspirationFeatures && message.status === 'completed' ? <p className="inspiration-workflow-error" role="alert">回答格式不完整。<button type="button" disabled={busy || !latest} onClick={() => onSend('保留已确定的需求，按灵感台 JSON 协议重新整理上一轮结果，不增加功能。')}>重新整理</button></p> : null}{message.isFinal && message.status === 'completed' && !busy ? <button className="message-action" type="button" onClick={() => onCollect(splitInspirationFollowups(displayText).content)}>收藏方案</button> : null}</>
+  if (!preview.protocol) return <><ReplyMarkdown className="agent-markdown" content={splitInspirationFollowups(displayText).content} onSource={onSource} />{message.isFinal && message.status === 'completed' && !busy ? <button className="message-action" type="button" onClick={() => onCollect(splitInspirationFollowups(displayText).content)}>收藏方案</button> : null}</>
   return <>
-    {preview.reply ? <ReplyMarkdown content={preview.reply} onSource={onSource} /> : null}
+    {preview.reply ? <ReplyMarkdown className="agent-markdown" content={preview.reply} onSource={onSource} /> : null}
     {preview.promptText || message.promptEdit !== undefined ? <section className="inspiration-prompt-artifact" aria-label="提示词">
       <header><strong>提示词</strong></header>
       {editing ? <textarea aria-label="编辑提示词" maxLength={20000} value={edited} onChange={event => setEdited(event.target.value)} />
-        : <div className="inspiration-prompt-body"><ReplyMarkdown content={promptText} onSource={onSource} /></div>}
+        : <div className="inspiration-prompt-body"><ReplyMarkdown className="agent-markdown" content={promptText} onSource={onSource} /></div>}
       <footer><div className="inspiration-prompt-tools">
         <button type="button" title="复制提示词" onClick={() => void navigator.clipboard.writeText(editing ? edited : promptText).catch(() => setError('复制失败，请选择正文复制'))}><Copy size={14} />复制</button>
         {complete && !busy ? editing ? <><button type="button" disabled={!edited.trim()} onClick={() => { onEdit(edited); setEditing(false) }}>保存编辑</button><button type="button" onClick={() => setEditing(false)}>取消</button></>
@@ -86,7 +85,7 @@ export default function InspirationWorkflowReply({ message, features, projectPat
       <button type="button" onClick={() => setKnowledgeOpen(true)}><BookOpen size={15} />知识更新</button>
       {record?.status === 'saved' ? <><span>已保存</span><button type="button" disabled={knowledgeBusy} onClick={() => void saveKnowledge([], true)}>撤销</button></> : record?.status === 'undone' ? <span>已撤销</span> : null}
     </div> : null}
-    {preview.error || error ? <p className="inspiration-workflow-error" role="alert">{error || preview.error}{preview.error && latest ? <button type="button" disabled={busy} onClick={() => onSend('保留已确定的需求，按灵感台 JSON 协议重新整理上一轮结果，不增加功能。')}>重新整理</button> : null}</p> : null}
+    {preview.error || error ? <p className="inspiration-workflow-error" role="alert">{error || preview.error}{preview.error && latest ? <button type="button" disabled={busy} onClick={() => onSend('保留已确定的需求，通过灵感台结果工具重新提交上一轮产物，不增加功能。')}>重新整理</button> : null}</p> : null}
     {knowledgeOpen ? <KnowledgePreview preview={preview.candidates} record={record} complete={Boolean(complete)} busy={knowledgeBusy} error={error}
       onClose={() => setKnowledgeOpen(false)} onSave={edits => void saveKnowledge(edits)} onUndo={() => void saveKnowledge([], true)} /> : null}
   </>
@@ -114,8 +113,8 @@ function KnowledgePreview({ preview, record, complete, busy, error, onClose, onS
     <div className="inspiration-workflow-knowledge-body">{items.map((item, index) => <section key={index}>
       <div className="inspiration-knowledge-item-heading">{complete && !saved ? <input type="checkbox" aria-label={`保存${item.title}`} checked={selected[index] !== false} onChange={event => setSelected(current => ({ ...current, [index]: event.target.checked }))} /> : null}
         {editing ? <input aria-label={`知识标题 ${index + 1}`} maxLength={120} value={edits[index]?.title ?? item.title ?? ''} onChange={event => setEdits(current => ({ ...current, [index]: { title: event.target.value, content: current[index]?.content ?? item.content ?? '' } }))} /> : <strong>{item.title}</strong>}
-      </div>{record?.changes[index]?.before ? <details><summary>查看原有内容</summary><ReplyMarkdown content={record.changes[index].before!.content} /></details> : null}
-      {editing ? <textarea aria-label={`知识内容 ${index + 1}`} maxLength={20000} value={edits[index]?.content ?? item.content ?? ''} onChange={event => setEdits(current => ({ ...current, [index]: { title: current[index]?.title ?? item.title ?? '', content: event.target.value } }))} /> : <ReplyMarkdown content={edits[index]?.content ?? item.content ?? ''} />}
+      </div>{record?.changes[index]?.before ? <details><summary>查看原有内容</summary><ReplyMarkdown className="agent-markdown" content={record.changes[index].before!.content} /></details> : null}
+      {editing ? <textarea aria-label={`知识内容 ${index + 1}`} maxLength={20000} value={edits[index]?.content ?? item.content ?? ''} onChange={event => setEdits(current => ({ ...current, [index]: { title: current[index]?.title ?? item.title ?? '', content: event.target.value } }))} /> : <ReplyMarkdown className="agent-markdown" content={edits[index]?.content ?? item.content ?? ''} />}
     </section>)}{error || record?.error ? <p className="inspiration-workflow-error" role="alert">{error || record?.error}</p> : null}</div>
     <footer><button type="button" disabled={!complete || busy || saved} onClick={() => setEditing(current => !current)}>{editing ? '结束编辑' : '编辑内容'}</button><div>
       <button type="button" disabled={busy} onClick={onClose}>{saved ? '关闭' : '暂不保存'}</button>

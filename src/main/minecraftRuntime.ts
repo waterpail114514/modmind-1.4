@@ -1,3 +1,10 @@
+import { prepareLegacyForgeJavaCompatibility } from './legacyForgeJavaCompatibility'
+import { recordDiagnosticArtifact } from './diagnosticArtifacts'
+import { BackgroundGameControlSession, backgroundGameWindowsHide } from './gameControlSession'
+import { gradleRepositoryArguments, isManagedRepositoryFailure } from './gradleRepositoryPolicy'
+import { prepareForgeGradleDownloads } from './forgeGradleDownloads'
+import { watchGradleBuild } from './gradleDiagnostics'
+import { boundedGradleJavaOptions, GRADLE_NETWORK_TIMEOUTS } from './gradleNetworkPolicy'
 import { hasConnectorBridge, validateRuntimeModArtifact } from './modpackArtifactValidation'
 import { spawnManaged, stopProcessTree } from './processTree'
 import { app, net } from 'electron'
@@ -38,7 +45,7 @@ import type { JavaPreferences, DetectedJavaHome, LoaderKind, ProjectInfo } from 
 import { isJavaLoader, isServerPluginPlatform, platformLabel } from '../shared/projectPlatform'
 import { findPluginArtifact } from './serverPluginService'
 import { buildMavenPlugin } from './mavenBuild'
-import { isForgeJavaProvisioningFailure, isGradleBuildStarted, isGradleDistributionFailure, isGradleJavaToolchainFailure, isGradleNetworkFailure } from './gradleFailure'
+import { isForgeJavaProvisioningFailure, isGradleMavenDependencyFailure, isGradleBuildStarted, isGradleDistributionFailure, isGradleJavaToolchainFailure, isGradleNetworkFailure } from './gradleFailure'
 import { readModpackManifest, readModpackModuleProject, syncModpackOverrides, syncReloadableKubeJsScripts, assertModpackDependenciesReady } from './modpackService'
 import { modpackModsRoot } from './modpackPaths'
 import { isSafeModJarFileName } from './modpackFilename'
@@ -62,7 +69,7 @@ import {
   resolveMinecraftVersionFromManifests
 } from './minecraftVersionManifest'
 import { runMinecraftTaskWithRecovery, minecraftDownloadRecoveryOptions } from './minecraftTaskRecovery'
-import { forgeInstallerVersion } from './forgeInstallerVersion'
+import { forgeInstallerVersion, forgeInstallerUrl } from './forgeInstallerVersion'
 import { installedRuntimeCandidates } from './minecraftRuntimeCache'
 import { getNetworkProxyUrl, fetchTextWithRetry } from './networkRequest'
 import { downloadFailureText } from '../shared/downloadFailure'
@@ -324,6 +331,10 @@ function summarizeGradleFailure(logText: string): string {
   }
   if (isGradleNetworkFailure(logText)) {
     return '项目 Gradle Wrapper 无法取得配置的 Gradle 分发包。请检查 gradle/wrapper/gradle-wrapper.properties、网络或代理设置'
+  }
+  if (!/\.java:\d+:\s*(?:error|错误):/i.test(logText) && (isGradleMavenDependencyFailure(logText) || /(?:SocketTimeoutException|Read timed out|connect timed out)/i.test(logText))) {
+    const details = lines.filter(line => /(?:https?:\/\/|Could not|timed out|SocketTimeout)/i.test(line)).slice(-8)
+    return `Gradle/ForgeGradle 下载构建依赖失败或超时。请检查网络、代理或对应 Maven 仓库后重试；这不表示源码编译错误。\n${details.join('\n')}`
   }
   const compilerErrors: string[] = []
   for (let index = 0; index < lines.length && compilerErrors.length < 12; index += 1) {
@@ -742,6 +753,13 @@ async function readConfiguredLoaderApiVersion(project: ProjectInfo): Promise<str
 }
 
 export class MinecraftRuntimeManager {
+  private backgroundGameControl: BackgroundGameControlSession | null = null
+  getBackgroundGameControl(): BackgroundGameControlSession {
+    const project = this.requireProject()
+    if (!this.backgroundGameControl || !this.process) throw new Error('当前测试实例未启用后台控制')
+    this.backgroundGameControl.assertProject(project.path)
+    return this.backgroundGameControl
+  }
   private readonly vanillaClient: boolean
   private readonly instanceDirectory?: string
   private readonly minecraftMcpPort?: number
@@ -765,6 +783,8 @@ export class MinecraftRuntimeManager {
   private readonly buildToolchainHomes = new Map<number, string>()
   private stopRequested = false
   private lastProgressAt = 0
+  private lastBuildEvent: MinecraftRuntimeEvent | null = null
+
   private lastProgressStage: MinecraftRuntimeStage | '' = ''
   private stateProjectPath = ''
   private state: MinecraftRuntimeState = {
@@ -989,6 +1009,7 @@ export class MinecraftRuntimeManager {
       throw new Error('游戏窗口尺寸需在 640×360 至 3840×2160 之间')
     }
     const extraJVMArgs = validateJvmArguments(options.extraJVMArgs)
+    if (options.backgroundControl !== undefined && typeof options.backgroundControl !== 'boolean') throw new Error('后台控制选项无效')
 
     if (!this.vanillaClient && project.kind !== 'modpack' && !withoutProjectMod) {
       const syncedArtifact = path.join(this.modsRoot(project), projectArtifactName(project))
@@ -1024,19 +1045,23 @@ export class MinecraftRuntimeManager {
     const instanceRoot = this.instanceRoot(project)
     const gameDirectory = gameDirectoryForLaunch(instanceRoot, withoutProjectMod)
     await fs.mkdir(gameDirectory, { recursive: true })
+    if (!this.vanillaClient) await prepareLegacyForgeJavaCompatibility(project.loader, project.minecraftVersion, gameDirectory)
     await applyNarratorPreference(gameDirectory, options.disableNarrator !== false)
     this.stopRequested = false
     this.updateState({ lastCrash: undefined })
     this.emit('launching', withoutProjectMod ? '正在启动不加载项目 Mod 的游戏' : '正在生成离线启动参数')
     const launchedAt = Date.now()
     let child: ChildProcess
+    const backgroundControl = options.backgroundControl === true ? await BackgroundGameControlSession.prepare(project.path, gameDirectory) : null
+    const launchJVMArgs = backgroundControl ? backgroundControl.jvmArguments(extraJVMArgs, project.loader) : extraJVMArgs
     try {
       child = await launch({
         spawn: (command, args, options) => {
           signal?.throwIfAborted()
-          return spawnManaged(command, [...(args ?? [])], this.minecraftMcpPort
-            ? { ...options, env: { ...managedJavaEnvironment(options?.env ?? process.env), MC_MCP_PORT: String(this.minecraftMcpPort) } }
-            : options ?? {})
+          if (!backgroundControl && !this.minecraftMcpPort) return spawnManaged(command, [...(args ?? [])], options ?? {})
+          const environment = managedJavaEnvironment(options?.env ?? process.env)
+          if (this.minecraftMcpPort) environment.MC_MCP_PORT = String(this.minecraftMcpPort)
+          return spawnManaged(command, [...(args ?? [])], { ...options, env: backgroundControl ? backgroundControl.environment(environment) : environment })
         },
         gamePath: gameDirectory,
         resourcePath: this.resourceRoot(),
@@ -1050,11 +1075,12 @@ export class MinecraftRuntimeManager {
         minMemory: Math.min(512, options.maxMemoryMb),
         maxMemory: options.maxMemoryMb,
         resolution: { width, height },
-        ...(extraJVMArgs.length ? { extraJVMArgs } : {}),
+        ...(launchJVMArgs.length ? { extraJVMArgs: launchJVMArgs } : {}),
         ...(options.server ? multiplayerLaunchOptions(project.minecraftVersion, options.server) : {}),
-        extraExecOption: { cwd: gameDirectory, windowsHide: false }
+        extraExecOption: { cwd: gameDirectory, windowsHide: backgroundControl ? backgroundGameWindowsHide(project.minecraftVersion) : false }
       })
     } catch (error) {
+      await backgroundControl?.dispose()
       const message = error instanceof Error ? error.message : String(error)
       const detail = /spawn\s+unknown/i.test(message)
         ? `${message}\nJava: ${launchJavaPath}\n实例目录：${instanceRoot}\nLoader：${metadata.loaderVersionId}`
@@ -1065,6 +1091,12 @@ export class MinecraftRuntimeManager {
       throw error
     }
     this.process = child
+    if (backgroundControl) {
+      try { backgroundControl.bind(child); this.backgroundGameControl = backgroundControl }
+      catch (error) { this.killProcessTree(child); await backgroundControl.dispose(); throw error }
+      const clear = (): void => { if (this.backgroundGameControl === backgroundControl) this.backgroundGameControl = null }
+      child.once('exit', clear); child.once('error', clear)
+    }
     const launcherLog = createWriteStream(path.join(gameDirectory, 'launcher-console.log'), { flags: 'w' })
     let transcriptFailure = ''
     const logFinished = finished(launcherLog).catch(() => undefined)
@@ -1224,6 +1256,7 @@ export class MinecraftRuntimeManager {
   async stop(): Promise<MinecraftRuntimeState> {
     await this.cancelPreparation()
     this.buildController?.abort()
+    await this.backgroundGameControl?.release().catch(() => undefined)
     const active = this.process
     const activeBuild = this.buildProcess
     const activeVerification = this.verificationProcess
@@ -1249,12 +1282,15 @@ export class MinecraftRuntimeManager {
     void stopProcessTree(child)
   }
 
+  private managedRepositoryOfficial = false
+
   private spawnGradle(
     runtime: GradleRuntimeSelection,
     project: ProjectInfo,
     args: string[],
     env: NodeJS.ProcessEnv
   ): ChildProcessWithoutNullStreams {
+    args = [...gradleRepositoryArguments(env.GRADLE_USER_HOME!, this.managedRepositoryOfficial), ...args]
     const toolchainHomes = env.MODMIND_GRADLE_JAVA_HOMES?.trim()
     const toolchainEnvNames = env.MODMIND_GRADLE_JAVA_ENV_NAMES?.trim()
     const managedArguments = toolchainHomes
@@ -1290,7 +1326,7 @@ export class MinecraftRuntimeManager {
       GRADLE_USER_HOME: path.join(app.getPath('userData'), 'gradle-runtime', 'cache'),
       ...(homes ? { MODMIND_GRADLE_JAVA_HOMES: homes } : {}),
       ...(javaEnvironmentNames ? { MODMIND_GRADLE_JAVA_ENV_NAMES: javaEnvironmentNames, ...javaEnvironment } : {}),
-      ...(proxy ? { JAVA_TOOL_OPTIONS: `${existingJavaOptions}${existingJavaOptions ? ' ' : ''}${proxy}` } : {})
+      JAVA_TOOL_OPTIONS: boundedGradleJavaOptions([existingJavaOptions, proxy].filter(Boolean).join(' '))
     }
   }
 
@@ -1431,24 +1467,30 @@ export class MinecraftRuntimeManager {
 
   private async testGradleTaskAttempt(project: ProjectInfo, candidates: string[], stableWindowMs: number, signal: AbortSignal | undefined, toolchainRetryAttempt: number, distributionRetryAttempt: number): Promise<GradleVerificationResult> {
     if (signal?.aborted) throw Object.assign(new Error('Gradle 验证已取消'), { name: 'AbortError' })
-    await this.prepareGradleMavenFallback(project)
+    await this.prepareGradleMavenFallback(project, signal, distributionRetryAttempt > 0)
     await this.prepareGradleWrapperDownload(project, 0, signal)
     const runtime = await this.gradleRuntime(project, signal)
     const env = this.gradleEnvironment(runtime)
     if (signal?.aborted) throw Object.assign(new Error('Gradle 验证已取消'), { name: 'AbortError' })
+    const taskLogDirectory = path.join(project.path, projectDataDirectory(project), 'builds')
+    await fs.mkdir(taskLogDirectory, { recursive: true }).catch(() => undefined)
+    const taskLogPath = path.join(taskLogDirectory, `gradle-tasks-${Date.now()}-${randomUUID()}.log`)
     const taskList = this.spawnGradle(runtime, project, ['tasks', '--all', '--console=plain', '--no-daemon'], env)
+    const taskDiagnostics = watchGradleBuild({ child: taskList, projectPath: project.path, dataRoot: path.join(project.path, projectDataDirectory(project)), javaHome: runtime.javaHome, gradleUserHome: env.GRADLE_USER_HOME!, logPath: taskLogPath })
     this.verificationProcess = taskList
     const abortTaskList = (): void => this.killProcessTree(taskList)
     signal?.addEventListener('abort', abortTaskList, { once: true })
     if (signal?.aborted) abortTaskList()
     let taskOutput = ''
-    taskList.stdout.on('data', (chunk: Buffer) => { if (taskOutput.length < 2_000_000) taskOutput += chunk.toString('utf8') })
-    taskList.stderr.on('data', (chunk: Buffer) => { if (taskOutput.length < 2_000_000) taskOutput += chunk.toString('utf8') })
+    taskList.stdout.on('data', (chunk: Buffer) => { taskDiagnostics.output(); if (taskOutput.length < 2_000_000) taskOutput += chunk.toString('utf8') })
+    taskList.stderr.on('data', (chunk: Buffer) => { taskDiagnostics.output(); if (taskOutput.length < 2_000_000) taskOutput += chunk.toString('utf8') })
     let taskSpawnError = ''
     taskList.once('error', (error) => { taskSpawnError = `${error.name}: ${error.message}` })
     const taskExit = await new Promise<number>((resolve) => {
       taskList.once('close', (code) => resolve(normalizeProcessExitCode(code) ?? 1))
     })
+    await fs.writeFile(taskLogPath, taskOutput).catch(() => undefined)
+    await taskDiagnostics.finish(taskExit, signal?.aborted === true)
     signal?.removeEventListener('abort', abortTaskList)
     this.verificationProcess = null
     if (signal?.aborted) throw Object.assign(new Error('Gradle 验证已取消'), { name: 'AbortError' })
@@ -1475,13 +1517,18 @@ export class MinecraftRuntimeManager {
       ? ['processResources', 'classes']
       : []
     const child = this.spawnGradle(runtime, project, [...preparationTasks, task, '--console=plain', '--no-daemon', '--stacktrace'], env)
+    const diagnostics = watchGradleBuild({ child, projectPath: project.path, dataRoot: path.join(project.path, projectDataDirectory(project)), javaHome: runtime.javaHome, gradleUserHome: env.GRADLE_USER_HOME!, logPath })
+    child.once('close', code => { void diagnostics.finish(normalizeProcessExitCode(code), signal?.aborted === true) })
     this.verificationProcess = child
     let output = ''
     let readyAt = 0
+    let executionStartedAt = 0
     const capture = (chunk: Buffer, level: MinecraftRuntimeEvent['level']): void => {
+      diagnostics.output()
       const text = chunk.toString('utf8')
       log.write(text)
       output = `${output}${text}`.slice(-200_000)
+      if (new RegExp('> Task (?:[^\\s]*:)?' + task + '(?:\\s|$)').test(output)) executionStartedAt ||= Date.now()
       if (/Done \([\d.]+s\)!|For help, type "help"|Server started|Dedicated server took/i.test(output)) readyAt ||= Date.now()
       const line = text.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean).at(-1)
       if (line) this.emit('testing-server', line, level, false)
@@ -1494,8 +1541,8 @@ export class MinecraftRuntimeManager {
     child.once('close', (code) => { exitCode = normalizeProcessExitCode(code) ?? 1 })
     const abort = (): void => this.killProcessTree(child)
     signal?.addEventListener('abort', abort, { once: true })
-    const deadline = Date.now() + (stableWindowMs ? 150_000 : 10 * 60_000)
-    while (exitCode === null && Date.now() < deadline) {
+    const executionBudgetMs = stableWindowMs ? 5 * 60_000 : 10 * 60_000
+    while (exitCode === null && (!executionStartedAt || Date.now() - executionStartedAt < executionBudgetMs)) {
       if (signal?.aborted) break
       if (stableWindowMs && readyAt && Date.now() - readyAt >= stableWindowMs) break
       await new Promise((resolve) => setTimeout(resolve, 250))
@@ -1527,9 +1574,9 @@ export class MinecraftRuntimeManager {
       this.emit('testing-server', '已根据验证日志补齐工具链，正在重试 Gradle 任务', 'warning')
       return { toolchainRetryAttempt: toolchainRetryAttempt + 1, distributionRetryAttempt }
     }
-    if (distributionRetryAttempt < 2 && isGradleNetworkFailure(logText)) {
-      this.emit('testing-server', 'Gradle 分发包下载源暂时不可用，正在切换备用源重试', 'warning')
-      await this.prepareGradleWrapperDownload(project, distributionRetryAttempt + 1, signal)
+    if (distributionRetryAttempt < 2 && (isGradleNetworkFailure(logText) || distributionRetryAttempt === 0 && isManagedRepositoryFailure(logText))) {
+      this.emit('testing-server', 'Gradle 下载或依赖镜像暂时不可用，正在使用备用源与项目原仓库重试', 'warning')
+      if (isGradleNetworkFailure(logText)) await this.prepareGradleWrapperDownload(project, distributionRetryAttempt + 1, signal)
       return { toolchainRetryAttempt, distributionRetryAttempt: distributionRetryAttempt + 1 }
     }
     return null
@@ -1673,6 +1720,7 @@ export class MinecraftRuntimeManager {
     reportSync('整合包同步完成')
     await fs.mkdir(path.dirname(statePath), { recursive: true })
     await fs.writeFile(statePath, `${JSON.stringify({ files: written, overrides, artifacts: sources.map(entry => ({ name: entry.targetName, ...entry.integrity })) }, null, 2)}\n`, 'utf8')
+    await recordDiagnosticArtifact(project,'pack-mods-synced',{entries:sources.flatMap(entry=>[{name:`source/${entry.targetName}`,path:entry.source},{name:`deployed/${entry.targetName}`,path:path.join(directory,entry.targetName)}]),metadata:{destinationPath:directory,removed:previousFiles.filter((file:string)=>!written.includes(file))}})
     this.emit('syncing-mod', `Synced ${written.length} modpack mods and ${overrides.length} override files`)
     await this.refresh()
     this.updateState({ stage: 'idle', message: `已同步 ${written.length} 个整合包 Mod 和 ${overrides.length} 个配置文件` })
@@ -1710,6 +1758,7 @@ export class MinecraftRuntimeManager {
     if (signal?.aborted) forwardAbort()
     else signal?.addEventListener('abort', forwardAbort, { once: true })
     this.buildController = controller
+    this.lastBuildEvent = null
     this.buildPromise = this.buildProjectInternal(controller.signal)
       .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error)
@@ -1741,7 +1790,7 @@ export class MinecraftRuntimeManager {
     if (project.kind === 'server-plugin') {
       if (!isServerPluginPlatform(project.loader)) throw new Error('插件工程平台无效')
       if (await exists(path.join(project.path, 'pom.xml')) && !await exists(path.join(project.path, 'build.gradle')) && !await exists(path.join(project.path, 'build.gradle.kts'))) {
-        await buildMavenPlugin(project, { javaPath: await this.ensureBuildJava(project, signal), cacheRoot: path.join(app.getPath('userData'), 'maven-runtime'), signal, onOutput: output => this.emit('building-mod', output.trim().slice(-2000)) })
+        await buildMavenPlugin(project, { javaPath: await this.ensureBuildJava(project, signal), cacheRoot: path.join(app.getPath('userData'), 'maven-runtime'), official: (await this.getGradleDownloadSource?.() ?? 'auto') === 'official', signal, onOutput: output => this.emit('building-mod', output.trim().slice(-2000)) })
       } else await this.runGradleBuild(project, signal)
       const artifact = await findPluginArtifact(project)
       this.updateState({ stage: 'idle', message: `插件构建完成：${artifact.name}`, mods: [artifact] })
@@ -1765,7 +1814,7 @@ export class MinecraftRuntimeManager {
       return artifact
     }
     await this.prepareProjectDependencies?.(project, signal)
-    await this.prepareGradleMavenFallback(project)
+    await this.prepareGradleMavenFallback(project, signal, distributionRetryAttempt > 0)
     await this.prepareGradleWrapperDownload(project, 0, signal)
     const runtime = await this.gradleRuntime(project, signal)
     const logDirectory = path.join(project.path, projectDataDirectory(project), 'builds')
@@ -1780,6 +1829,7 @@ export class MinecraftRuntimeManager {
     this.emit('building-mod', '正在使用项目 Gradle Wrapper 执行 gradlew build')
 
     const child = this.spawnGradle(runtime, project, [...MANAGED_GRADLE_BUILD_ARGUMENTS], gradleEnvironment)
+    const diagnostics = watchGradleBuild({ child, projectPath: project.path, dataRoot: path.join(project.path, projectDataDirectory(project)), javaHome: runtime.javaHome, gradleUserHome: gradleEnvironment.GRADLE_USER_HOME!, logPath })
     this.buildProcess = child
     let spawnError = ''
     child.once('error', (error) => {
@@ -1795,6 +1845,7 @@ export class MinecraftRuntimeManager {
     const recentLines: string[] = []
     let gradleDownloadActivityId = ''
     const capture = (chunk: Buffer, level: MinecraftRuntimeEvent['level']): void => {
+      diagnostics.output()
       const text = chunk.toString('utf8')
       log.write(text)
       const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
@@ -1816,6 +1867,7 @@ export class MinecraftRuntimeManager {
     this.buildProcess = null
     signal?.removeEventListener('abort', abortBuild)
     await new Promise<void>((resolve) => log.end(resolve))
+    await diagnostics.finish(termination.code, aborted)
     const fullLog = gradleDownloadActivityId || termination.code !== 0 ? await fs.readFile(logPath, 'utf8').catch(() => recentLines.join('\n')) : ''
     if (gradleDownloadActivityId) {
       if (isGradleDistributionFailure(fullLog)) downloadActivities.fail(gradleDownloadActivityId, summarizeGradleFailure(fullLog))
@@ -1834,9 +1886,9 @@ export class MinecraftRuntimeManager {
         }
       }
       const detail = summarizeGradleFailure(fullLog)
-      if (!aborted && distributionRetryAttempt < 2 && isGradleNetworkFailure(fullLog)) {
-        this.emit('building-mod', 'Gradle 下载源暂时不可用，正在切换备用源重试', 'warning')
-        await this.prepareGradleWrapperDownload(project, distributionRetryAttempt + 1, signal)
+      if (!aborted && distributionRetryAttempt < 2 && (isGradleNetworkFailure(fullLog) || distributionRetryAttempt === 0 && isManagedRepositoryFailure(fullLog))) {
+        this.emit('building-mod', 'Gradle 下载或依赖镜像暂时不可用，正在使用备用源与项目原仓库重试', 'warning')
+        if (isGradleNetworkFailure(fullLog)) await this.prepareGradleWrapperDownload(project, distributionRetryAttempt + 1, signal)
         return this.buildProjectInternal(signal, toolchainRetryAttempt, distributionRetryAttempt + 1)
       }
       throw new Error(`Gradle 构建失败（${describeProcessTermination(termination.code, termination.signal)}）${detail ? `\n${detail}` : ''}\n完整日志：${logPath}`)
@@ -1883,23 +1935,31 @@ export class MinecraftRuntimeManager {
     const configuredUrl = content.match(/^distributionUrl\s*=\s*(.+)$/mi)?.[1]?.trim().replaceAll('\\:', ':') ?? ''
     const preference = await this.getGradleDownloadSource?.() ?? 'auto'
     const sources = gradleDistributionSources(match[1], preference, match[2].toLowerCase() as 'bin' | 'all')
-    if (project.kind === 'server-plugin') {
-      const checksum = content.match(/^distributionSha256Sum\s*=\s*([a-f0-9]{64})\s*$/mi)?.[1]
-      if (checksum && /^https:\/\//i.test(configuredUrl)) {
+    const checksum = content.match(/^distributionSha256Sum\s*=\s*([a-f0-9]{64})\s*$/mi)?.[1]
+    const property = (key: string): string => content.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, 'mi'))?.[1]?.trim() ?? ''
+    const defaultCache = ['distributionBase', 'zipStoreBase'].every(key => !property(key) || property(key) === 'GRADLE_USER_HOME')
+      && ['distributionPath', 'zipStorePath'].every(key => !property(key) || property(key) === 'wrapper/dists')
+    const distribution = /^https:\/\//i.test(configuredUrl) ? new URL(configuredUrl) : null
+    if (checksum && defaultCache && distribution && !distribution.username && !distribution.password && /^[\x20-\x7e]+$/.test(configuredUrl)
+      && path.posix.basename(distribution.pathname) === `gradle-${match[1]}-${match[2]}.zip`) {
         const key = BigInt(`0x${createHash('md5').update(configuredUrl).digest('hex')}`).toString(36)
         const filename = `gradle-${match[1]}-${match[2]}.zip`
         const cache = path.join(app.getPath('userData'), 'gradle-runtime/cache/wrapper/dists', filename.slice(0, -4), key)
         const archive = path.join(cache, filename)
-        if (!await exists(`${archive}.ok`) && !await exists(archive)) {
-          await verifiedDownload.download({ sources: sources.map(source => ({ ...source })), destination: archive, expectedHash: { algorithm: 'sha256', value: checksum }, signal, timeoutMs: 120_000, retriesPerSource: 1, onProgress: progress => this.emitProgress('building-mod', `正在下载 Gradle ${match[1]}：${progress.source.label}`, progress.downloaded, progress.total ?? 0) })
+        if (await exists(`${archive}.ok`)) return
+        if (await exists(archive)) {
+          const digest = createHash('sha256')
+          for await (const chunk of createReadStream(archive)) { signal?.throwIfAborted(); digest.update(chunk) }
+          if (digest.digest('hex').toLowerCase() === checksum.toLowerCase()) return
         }
+        const trustedSources = sources.some(source => source.url === configuredUrl) ? sources : [{ id: 'project', label: '项目 Gradle 源', url: configuredUrl }]
+        await verifiedDownload.download({ sources: trustedSources, destination: archive, expectedHash: { algorithm: 'sha256', value: checksum }, signal, stallTimeoutMs: 180_000, resume: true, retriesPerSource: 2, onProgress: progress => this.emitProgress('building-mod', `正在下载 Gradle ${match[1]}：${progress.source.label}`, progress.downloaded, progress.total ?? 0) })
         return
-      }
     }
     // Keep the project's original/recommended distribution on the first run.
     // Only rewrite the URL after a failed attempt, then walk every distinct
     // mirror before surfacing the original failure.
-    if (attempt === 0 && /^https:\/\//i.test(configuredUrl)) return
+    if (attempt === 0 && configuredUrl) return
     const alternatives = sources.filter((source) => source.url !== configuredUrl)
     const index = sources.findIndex(source => source.url === configuredUrl)
     const source = index >= 0 ? sources[(index + 1) % sources.length] : alternatives[0]
@@ -1908,7 +1968,15 @@ export class MinecraftRuntimeManager {
     if (next !== content) await fs.writeFile(propertiesPath, next, 'utf8')
   }
 
-  private async prepareGradleMavenFallback(project: ProjectInfo): Promise<void> {
+  private async prepareGradleMavenFallback(project: ProjectInfo, signal?: AbortSignal, officialFallback = false): Promise<void> {
+    this.managedRepositoryOfficial = officialFallback || (await this.getGradleDownloadSource?.() ?? 'auto') === 'official'
+    if (!this.managedRepositoryOfficial) {
+      try { await prepareForgeGradleDownloads(project, path.join(app.getPath('userData'), 'gradle-runtime', 'cache'), signal) }
+      catch (error) {
+        signal?.throwIfAborted()
+        diagnosticJournal.record({ subsystem: 'minecraft-download', operation: 'forge-gradle-preparation', phase: 'fallback', level: 'warning', message: 'Forge cache preparation unavailable; retaining upstream build cache and finite HTTP timeouts', error })
+      }
+    }
     if (project.loader !== 'fabric' && project.loader !== 'quilt') return
     for (const name of ['settings.gradle', 'settings.gradle.kts', 'build.gradle', 'build.gradle.kts']) {
       const target = path.join(project.path, name)
@@ -1920,7 +1988,7 @@ export class MinecraftRuntimeManager {
   }
 
   private async runGradleBuild(project: ProjectInfo, signal?: AbortSignal, toolchainRetryAttempt = 0, distributionRetryAttempt = 0): Promise<void> {
-    await this.prepareGradleMavenFallback(project)
+    await this.prepareGradleMavenFallback(project, signal, distributionRetryAttempt > 0)
     await this.prepareGradleWrapperDownload(project, 0, signal)
     const runtime = await this.gradleRuntime(project, signal)
     const logDirectory = path.join(project.path, projectDataDirectory(project), 'builds')
@@ -1933,6 +2001,7 @@ export class MinecraftRuntimeManager {
     if (signal?.aborted) throw Object.assign(new Error('构建已取消'), { name: 'AbortError' })
     const log = createWriteStream(logPath, { flags: 'w' })
     const child = this.spawnGradle(runtime, project, [...MANAGED_GRADLE_BUILD_ARGUMENTS], gradleEnvironment)
+    const diagnostics = watchGradleBuild({ child, projectPath: project.path, dataRoot: path.join(project.path, projectDataDirectory(project)), javaHome: runtime.javaHome, gradleUserHome: gradleEnvironment.GRADLE_USER_HOME!, logPath })
     this.buildProcess = child
     let output = ''
     let spawnError = ''
@@ -1945,6 +2014,7 @@ export class MinecraftRuntimeManager {
     }
     signal?.addEventListener('abort', abort, { once: true })
     const capture = (chunk: Buffer, level: MinecraftRuntimeEvent['level']): void => {
+      diagnostics.output()
       const text = chunk.toString('utf8')
       output = `${output}${text}`.slice(-200_000)
       log.write(text)
@@ -1964,6 +2034,7 @@ export class MinecraftRuntimeManager {
     this.buildProcess = null
     signal?.removeEventListener('abort', abort)
     await new Promise<void>((resolve) => log.end(resolve))
+    await diagnostics.finish(termination.code, aborted)
     const fullLog = gradleDownloadActivityId || termination.code !== 0 ? await fs.readFile(logPath, 'utf8').catch(() => output) : ''
     if (gradleDownloadActivityId) {
       if (isGradleDistributionFailure(fullLog)) downloadActivities.fail(gradleDownloadActivityId, summarizeGradleFailure(fullLog))
@@ -1981,13 +2052,28 @@ export class MinecraftRuntimeManager {
           return this.runGradleBuild(project, signal, toolchainRetryAttempt + 1, distributionRetryAttempt)
         }
       }
-      if (!aborted && distributionRetryAttempt < 2 && isGradleNetworkFailure(fullLog)) {
-        this.emit('building-mod', 'Gradle 下载源暂时不可用，正在切换备用源重试', 'warning')
-        await this.prepareGradleWrapperDownload(project, distributionRetryAttempt + 1, signal)
+      if (!aborted && distributionRetryAttempt < 2 && (isGradleNetworkFailure(fullLog) || distributionRetryAttempt === 0 && isManagedRepositoryFailure(fullLog))) {
+        this.emit('building-mod', 'Gradle 下载或依赖镜像暂时不可用，正在使用备用源与项目原仓库重试', 'warning')
+        if (isGradleNetworkFailure(fullLog)) await this.prepareGradleWrapperDownload(project, distributionRetryAttempt + 1, signal)
         return this.runGradleBuild(project, signal, toolchainRetryAttempt, distributionRetryAttempt + 1)
       }
       throw new Error(`自制 Mod 构建失败（${describeProcessTermination(termination.code, termination.signal)}）\n${summarizeGradleFailure(fullLog)}\n完整日志：${logPath}`)
     }
+  }
+
+  async cancelBuild() {
+    const active = this.buildPromise
+    if (!active) return { status: 'idle', state: this.getState() }
+    this.buildController?.abort()
+    if (this.buildProcess) await stopProcessTree(this.buildProcess)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try { await Promise.race([active.catch(() => undefined), new Promise<void>(resolve => { timer = setTimeout(resolve, 10_000) })]) }
+    finally { clearTimeout(timer) }
+    return { status: this.buildPromise === active ? 'cancelling' : 'cancelled', state: this.getState() }
+  }
+
+  buildRecoveryState(): { status: string; canCancel: boolean; state: MinecraftRuntimeState; lastEvent?: MinecraftRuntimeEvent | null; networkTimeouts: typeof GRADLE_NETWORK_TIMEOUTS; appliesTo: string } {
+    return { status: this.buildPromise ? 'running' : 'idle', canCancel: Boolean(this.buildController), state: this.getState(), lastEvent: this.lastBuildEvent, networkTimeouts: GRADLE_NETWORK_TIMEOUTS, appliesTo: 'new-build-java-processes' }
   }
 
   async buildDependencyProject(project: ProjectInfo, signal?: AbortSignal): Promise<string> {
@@ -2290,14 +2376,15 @@ export class MinecraftRuntimeManager {
           loaderVersion = `${project.minecraftVersion}-${selected.version}`
         }
         const forgeVersion = forgeInstallerVersion(project.minecraftVersion, loaderVersion)
-        await prepareLoaderInstaller({ loader: 'forge', minecraftVersion: project.minecraftVersion, version: forgeVersion, resourceRoot: this.resourceRoot(), signal, onProgress: progress => this.emitProgress('installing-loader', `正在下载 Forge 安装器：${progress.source.label}`, progress.downloaded, progress.total ?? 0, generation) })
+        const installerUrl = forgeInstallerUrl(project.minecraftVersion, loaderVersion)
+        await prepareLoaderInstaller({ loader: 'forge', minecraftVersion: project.minecraftVersion, version: forgeVersion, installerUrl, resourceRoot: this.resourceRoot(), signal, onProgress: progress => this.emitProgress('installing-loader', `正在下载 Forge 安装器：${progress.source.label}`, progress.downloaded, progress.total ?? 0, generation) })
         loaderVersionId = await runMinecraftTaskWithRecovery({
           signal,
           stallTimeoutMs: 120_000,
           createTask: (attempt) => installForgeTask(
-            { mcversion: project.minecraftVersion, version: forgeVersion },
+            { mcversion: project.minecraftVersion, version: forgeVersion, installer: { path: installerUrl } },
             this.resourceRoot(),
-            { java: javaPath, side: 'client', mavenHost: attempt % 2 === 1 ? FORGE_MAVEN_HOSTS : [...FORGE_MAVEN_HOSTS].reverse(), dispatcher, ...minecraftDownloadRecoveryOptions(attempt) }
+            { java: javaPath, side: 'client', inheritsFrom: project.minecraftVersion, mavenHost: attempt % 2 === 1 ? FORGE_MAVEN_HOSTS : [...FORGE_MAVEN_HOSTS].reverse(), dispatcher, ...minecraftDownloadRecoveryOptions(attempt) }
           ),
           onUpdate: (task) => this.emitProgress('installing-loader', `正在安装 Forge ${loaderVersion}`, task.progress, task.total, generation),
           onRetry: (attempt, error) => this.emit('installing-loader', `${error.message}，正在切换下载源重试 Forge 安装（${attempt}/3）`, 'warning')
@@ -2690,6 +2777,7 @@ export class MinecraftRuntimeManager {
   ): void {
     if (!message) return
     const event: MinecraftRuntimeEvent = { stage, message, level, time: new Date().toISOString(), ...(this.stateProjectPath ? {projectPath: this.stateProjectPath} : {}) }
+    if (stage === 'building-mod' || this.buildPromise) this.lastBuildEvent = event
     this.onEvent(event)
     if (updateState) this.updateState({ stage, message })
   }

@@ -1,4 +1,4 @@
-import { Agent, ProxyAgent, request, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from 'undici'
+import { Agent, ProxyAgent, request, fetch as undiciFetch, FormData as UndiciFormData, type RequestInit as UndiciRequestInit } from 'undici'
 import { setTimeout as delay } from 'node:timers/promises'
 
 export interface FetchTextOptions {
@@ -200,7 +200,18 @@ export async function networkFetch(input: string | URL, init: RequestInit = {}):
   init.signal?.throwIfAborted()
   const url = input.toString()
   const { dispatcher } = await requestRoute(url)
-  return await undiciFetch(url, { ...init, dispatcher } as UndiciRequestInit) as unknown as Response
+  let body = init.body
+  // Undici 7 requires its own FormData brand; Node/Electron's native instance
+  // would otherwise be sent as the literal string "[object FormData]".
+  if (body instanceof FormData && !(body instanceof UndiciFormData)) {
+    const form = new UndiciFormData()
+    for (const [name, value] of body.entries()) {
+      if (typeof value === 'string') form.append(name, value)
+      else form.append(name, value, value.name)
+    }
+    body = form as unknown as FormData
+  }
+  return await undiciFetch(url, { ...init, body, dispatcher } as UndiciRequestInit) as unknown as Response
 }
 
 export function proxyDispatcher(url?: string): ProxyAgent | undefined {

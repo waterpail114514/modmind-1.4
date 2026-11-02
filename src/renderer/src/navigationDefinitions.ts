@@ -1,4 +1,4 @@
-import { Archive, ArrowRightLeft, Binary, BookOpen, Box, CloudUpload, Code2, FileCog, FolderOpen, Gamepad2, Gauge, Hammer, History, Image, LibraryBig, Lightbulb, Link2, List, MessageSquareText, Music, PackageOpen, PackagePlus, Puzzle, Save, Server, ServerCog, Settings, SlidersHorizontal, Sparkles, WandSparkles, type LucideIcon } from 'lucide-react'
+import { ArrowRightLeft, Binary, BookOpen, Box, CloudUpload, Code2, FileCog, FileJson, FileOutput, FolderOpen, Gamepad2, GitCompareArrows, Globe2, Hammer, History, Image, LayoutTemplate, LibraryBig, Lightbulb, Link2, List, ListTree, MessageSquareText, Music, Network, Package, PackagePlus, Pickaxe, Puzzle, Server, ServerCog, Settings, SlidersHorizontal, Sparkles, type LucideIcon } from 'lucide-react'
 import type { ProjectInfo, SidebarViewId, UiMode } from '../../shared/types'
 import type { PluginRecord } from '../../shared/plugins'
 import { isJavaLoader, isServerPluginPlatform } from '../../shared/projectPlatform'
@@ -26,7 +26,7 @@ function buildProjectNavigationGroups(project: NavigationProject): NavigationGro
       {
         label: '应用',
         items: [
-          { id: 'image-studio' as const, label: '图像工坊', icon: WandSparkles },
+          { id: 'image-studio' as const, label: '图像工坊', icon: Image },
           { id: 'settings' as const, label: '设置', icon: Settings }
         ]
       }
@@ -38,30 +38,30 @@ function buildProjectNavigationGroups(project: NavigationProject): NavigationGro
     { label: '工具', items: [{ id: 'relationships' as const, label: '依赖与联动', icon: Link2 }, { id: 'code' as const, label: '代码', icon: Code2 }, { id: 'decompile' as const, label: '反编译', icon: Binary }, { id: 'modpack-server' as const, label: '测试', icon: Server }, { id: 'build' as const, label: '构建与导出', icon: Hammer }, { id: 'snapshots' as const, label: '版本迁移', icon: ArrowRightLeft }] },
     { label: '项目', items: [{ id: 'settings' as const, label: '设置', icon: Settings }] },
     { label: '资源', items: [
-      { id: 'image-studio' as const, label: '图像工坊', icon: WandSparkles },
+      { id: 'image-studio' as const, label: '图像工坊', icon: Image },
       { id: 'blockbench' as const, label: '模型', icon: Box },
-      { id: 'modpack-resourcepacks' as const, label: '资源包', icon: Image }
+      { id: 'modpack-resourcepacks' as const, label: '资源包', icon: Package }
     ] }
   ]
   if (modpackProject) {
     return [
       { label: '创作', items: [
         { id: 'workspace' as const, label: '整合包创作', icon: MessageSquareText },
-        { id: 'modpack-manifest' as const, label: '文件清单', icon: Archive },
+        { id: 'modpack-manifest' as const, label: '文件清单', icon: ListTree },
         { id: 'modpack-mod-list' as const, label: '模组列表', icon: List },
         { id: 'third-party-mods' as const, label: '模组下载', icon: PackagePlus }
       ] },
       { label: '内容', items: [
         { id: 'modpack-config' as const, label: '配置与默认项', icon: FileCog },
         { id: 'modpack-scripts' as const, label: '脚本与 KubeJS', icon: Code2 },
-        { id: 'modpack-datapacks' as const, label: '数据包', icon: Archive },
+        { id: 'modpack-datapacks' as const, label: '数据包', icon: FileJson },
         { id: 'ftb-quests' as const, label: 'FTB 任务书', icon: BookOpen },
         { id: 'patchouli' as const, label: 'Patchouli 指南书', icon: LibraryBig },
-        { id: 'image-studio' as const, label: '图像工坊', icon: WandSparkles },
-        { id: 'modpack-resourcepacks' as const, label: '资源包', icon: Image },
+        { id: 'image-studio' as const, label: '图像工坊', icon: Image },
+        { id: 'modpack-resourcepacks' as const, label: '资源包', icon: Package },
         { id: 'modpack-shaders' as const, label: '光影包', icon: Sparkles },
-        { id: 'modpack-ui' as const, label: '界面资源', icon: WandSparkles },
-        { id: 'modpack-worlds' as const, label: '存档与世界', icon: Save },
+        { id: 'modpack-ui' as const, label: '界面资源', icon: LayoutTemplate },
+        { id: 'modpack-worlds' as const, label: '存档与世界', icon: Globe2 },
         { id: 'modpack-client' as const, label: '玩家预设', icon: SlidersHorizontal },
         { id: 'modpack-server-content' as const, label: '服务端配置', icon: ServerCog },
         { id: 'modpack-files' as const, label: '文件工作台', icon: FolderOpen },
@@ -70,12 +70,12 @@ function buildProjectNavigationGroups(project: NavigationProject): NavigationGro
       { label: '运行', items: [
         { id: 'modpack-migration' as const, label: '版本迁移', icon: ArrowRightLeft },
         { id: 'decompile' as const, label: '反编译', icon: Binary },
-        { id: 'modpack-automation' as const, label: '依赖与优化', icon: Gauge },
+        { id: 'modpack-automation' as const, label: '依赖与优化', icon: Network },
         { id: 'modpack-server' as const, label: '测试', icon: Server },
         { id: 'minecraft' as const, label: '游戏测试', icon: Gamepad2 }
       ] },
       { label: '项目', items: [
-        { id: 'production' as const, label: '版本与导出', icon: CloudUpload },
+        { id: 'production' as const, label: '版本与导出', icon: FileOutput },
         { id: 'snapshots' as const, label: '版本记录', icon: History },
         { id: 'settings' as const, label: '设置', icon: Settings }
       ] }
@@ -88,17 +88,17 @@ function buildProjectNavigationGroups(project: NavigationProject): NavigationGro
       { id: 'inspiration' as const, label: '灵感台', icon: Lightbulb }
     ] },
     { label: '资源', items: [
-      { id: 'item-editor' as const, label: '物品与装备', icon: PackageOpen },
-      { id: 'image-studio' as const, label: '图像工坊', icon: WandSparkles },
+      { id: 'item-editor' as const, label: '物品与装备', icon: Pickaxe },
+      { id: 'image-studio' as const, label: '图像工坊', icon: Image },
       { id: 'blockbench' as const, label: '模型', icon: Box },
-      { id: 'modpack-resourcepacks' as const, label: '资源包', icon: Image },
+      { id: 'modpack-resourcepacks' as const, label: '资源包', icon: Package },
       { id: 'sounds' as const, label: '声音', icon: Music }
     ] },
     { label: '开发', items: [
       { id: 'code' as const, label: '代码', icon: Code2 },
       { id: 'relationships' as const, label: '前置与联动', icon: Link2 },
       { id: 'decompile' as const, label: '反编译', icon: Binary },
-      { id: 'mappings' as const, label: 'Mappings', icon: LibraryBig }
+      { id: 'mappings' as const, label: '映射表', icon: GitCompareArrows }
     ] },
     { label: '测试与构建', items: [
       { id: 'minecraft' as const, label: '游戏测试', icon: Gamepad2 },
@@ -120,25 +120,25 @@ function buildProjectNavigationGroups(project: NavigationProject): NavigationGro
       { id: 'third-party-mods' as const, label: '模组下载', icon: PackagePlus },
       { id: 'modpack-config' as const, label: '配置与默认项', icon: FileCog },
       { id: 'modpack-scripts' as const, label: '脚本与 KubeJS', icon: Code2 },
-      { id: 'modpack-datapacks' as const, label: '数据包', icon: Archive },
+      { id: 'modpack-datapacks' as const, label: '数据包', icon: FileJson },
       { id: 'ftb-quests' as const, label: 'FTB 任务书', icon: BookOpen },
       { id: 'patchouli' as const, label: 'Patchouli 指南书', icon: LibraryBig },
-      { id: 'modpack-resourcepacks' as const, label: '资源包', icon: Image },
+      { id: 'modpack-resourcepacks' as const, label: '资源包', icon: Package },
       { id: 'modpack-shaders' as const, label: '光影包', icon: Sparkles },
-      { id: 'modpack-ui' as const, label: '界面资源', icon: WandSparkles },
-      { id: 'modpack-worlds' as const, label: '存档与世界', icon: Save },
+      { id: 'modpack-ui' as const, label: '界面资源', icon: LayoutTemplate },
+      { id: 'modpack-worlds' as const, label: '存档与世界', icon: Globe2 },
       { id: 'modpack-client' as const, label: '玩家预设', icon: SlidersHorizontal },
       { id: 'modpack-server-content' as const, label: '服务端配置', icon: ServerCog },
       { id: 'modpack-files' as const, label: '文件工作台', icon: FolderOpen },
-      { id: 'modpack-automation' as const, label: '依赖与优化', icon: Gauge },
+      { id: 'modpack-automation' as const, label: '依赖与优化', icon: Network },
       { id: 'modpack-server' as const, label: '测试', icon: Server },
       { id: 'minecraft' as const, label: '游戏测试', icon: Gamepad2 },
       { id: 'inspiration' as const, label: '灵感台', icon: Lightbulb }
     ] : [
       { id: 'workspace' as const, label: '工作台', icon: MessageSquareText },
       { id: 'inspiration' as const, label: '灵感台', icon: Lightbulb },
-      ...(javaProject ? [{ id: 'item-editor' as const, label: '物品与装备', icon: PackageOpen }] : []),
-      { id: 'image-studio' as const, label: '图像工坊', icon: WandSparkles },
+      ...(javaProject ? [{ id: 'item-editor' as const, label: '物品与装备', icon: Pickaxe }] : []),
+      { id: 'image-studio' as const, label: '图像工坊', icon: Image },
       { id: 'blockbench' as const, label: '模型', icon: Box },
       { id: 'code' as const, label: '代码', icon: Code2 },
       ...(javaProject ? [{ id: 'relationships' as const, label: '前置与联动', icon: Link2 }] : []),
@@ -150,13 +150,13 @@ function buildProjectNavigationGroups(project: NavigationProject): NavigationGro
   {
     label: '项目',
     items: modpackProject ? [
-      { id: 'production' as const, label: '导出', icon: CloudUpload },
+      { id: 'production' as const, label: '版本与导出', icon: FileOutput },
       { id: 'snapshots' as const, label: '版本', icon: History },
       { id: 'settings' as const, label: '设置', icon: Settings }
     ] : [
       ...(javaProject ? [{ id: 'production' as const, label: '发布', icon: CloudUpload }] : []),
       { id: 'snapshots' as const, label: '版本', icon: History },
-      ...(javaProject ? [{ id: 'mappings' as const, label: 'Mappings', icon: LibraryBig }] : []),
+      ...(javaProject ? [{ id: 'mappings' as const, label: '映射表', icon: GitCompareArrows }] : []),
       { id: 'settings' as const, label: '设置', icon: Settings }
     ]
   }
@@ -182,7 +182,7 @@ export function buildNavigationDefinitions({ project, uiMode, plugins }: {
       ? [
           { label: '项目', items: [{ id: 'workspace' as const, label: '项目', icon: FolderOpen }] },
           { label: '应用', items: [
-            { id: 'image-studio' as const, label: '图像工坊', icon: WandSparkles },
+            { id: 'image-studio' as const, label: '图像工坊', icon: Image },
             { id: 'settings' as const, label: '设置', icon: Settings }
           ] }
         ]
@@ -190,11 +190,11 @@ export function buildNavigationDefinitions({ project, uiMode, plugins }: {
           ...(modpackProject ? [{
             label: '创作',
             items: [
-              { id: 'workspace' as const, label: '工作台', icon: Sparkles },
+              { id: 'workspace' as const, label: '工作台', icon: MessageSquareText },
               { id: 'inspiration' as const, label: '灵感台', icon: Lightbulb },
               { id: 'ftb-quests' as const, label: 'FTB 任务书', icon: BookOpen },
               { id: 'patchouli' as const, label: 'Patchouli 指南书', icon: LibraryBig },
-              { id: 'image-studio' as const, label: '图像工坊', icon: WandSparkles },
+              { id: 'image-studio' as const, label: '图像工坊', icon: Image },
               { id: 'code' as const, label: '代码编辑器', icon: Code2 },
               { id: 'minecraft' as const, label: '游戏测试', icon: Gamepad2 }
             ]
@@ -202,7 +202,7 @@ export function buildNavigationDefinitions({ project, uiMode, plugins }: {
           ...(!modpackProject ? javaProject
             ? navGroups.map(group => ({ ...group, items: group.items.filter(item => ['workspace', 'inspiration', 'item-editor', 'modpack-resourcepacks', 'sounds', 'relationships', 'minecraft'].includes(item.id)) })).filter(group => group.items.length > 0)
             : [{ label: '创作', items: [
-              { id: 'workspace' as const, label: '开始创作', icon: Sparkles },
+              { id: 'workspace' as const, label: '开始创作', icon: MessageSquareText },
               { id: 'inspiration' as const, label: '灵感', icon: Lightbulb },
               { id: 'build' as const, label: '构建与导出', icon: Hammer }
             ] }] : [])
@@ -212,7 +212,7 @@ export function buildNavigationDefinitions({ project, uiMode, plugins }: {
   const hasEnabledOverlayPlugin = plugins.some(plugin => plugin.enabled && !plugin.error && plugin.manifest.overlay)
   const visibleNavGroupsWithPlugins = (() => {
     const groups = project && (isJavaLoader(project.loader) || isServerPluginPlatform(project.loader)) && !visibleNavGroupsRaw.some(group => group.items.some(item => item.id === 'modpack-resourcepacks'))
-      ? [...visibleNavGroupsRaw, { label: '资源', items: [{ id: 'modpack-resourcepacks' as const, label: '资源包', icon: Image }, ...(isJavaLoader(project.loader) && project.kind !== 'modpack' && project.kind !== 'server-plugin' ? [{ id: 'sounds' as const, label: '声音', icon: Music }] : [])] }]
+      ? [...visibleNavGroupsRaw, { label: '资源', items: [{ id: 'modpack-resourcepacks' as const, label: '资源包', icon: Package }, ...(isJavaLoader(project.loader) && project.kind !== 'modpack' && project.kind !== 'server-plugin' ? [{ id: 'sounds' as const, label: '声音', icon: Music }] : [])] }]
       : visibleNavGroupsRaw
     const showManagerAlways = uiMode !== 'beginner'
     if (enabledPanelPlugins.length === 0 && !hasEnabledOverlayPlugin && !showManagerAlways) return groups
@@ -260,9 +260,9 @@ export function buildNavigationDefinitions({ project, uiMode, plugins }: {
     blockbench: '模型',
     code: '代码',
     build: '构建与导出',
-    production: '发布',
+    production: modpackProject ? '版本与导出' : '发布',
     snapshots: pluginProject ? '版本迁移' : '版本记录',
-    mappings: 'Mappings',
+    mappings: '映射表',
     settings: '设置'
   }
   // Group indices changed for Java mods. Preserve the previous layout under its

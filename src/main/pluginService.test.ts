@@ -89,12 +89,13 @@ describe('PluginService', () => {
     await fs.symlink(outside, path.join(directory, 'linked'), process.platform === 'win32' ? 'junction' : 'dir')
     await fs.link(path.join(outside, 'original.txt'), path.join(directory, 'hard.txt'))
     const service = new PluginService({ globalDirectory: globalDir, projectRoot: () => null })
-    await service.refresh()
-    await expect(service.writePluginFiles('safe-plugin', [{ path: 'linked/new.txt', content: 'bad' }])).rejects.toThrow(/link/)
-    await expect(service.writePluginFiles('safe-plugin', [{ path: 'hard.txt', content: 'bad' }])).rejects.toThrow(/link/)
-    expect(await fs.readFile(path.join(outside, 'original.txt'), 'utf8')).toBe('preserve')
-    expect(await fs.readdir(outside)).toEqual(['original.txt'])
-    service.close()
+    try {
+      await service.refresh()
+      await expect(service.writePluginFiles('safe-plugin', [{ path: 'linked/new.txt', content: 'bad' }])).rejects.toThrow(/link/)
+      await expect(service.writePluginFiles('safe-plugin', [{ path: 'hard.txt', content: 'bad' }])).rejects.toThrow(/link/)
+      expect(await fs.readFile(path.join(outside, 'original.txt'), 'utf8')).toBe('preserve')
+      expect(await fs.readdir(outside)).toEqual(['original.txt'])
+    } finally { service.close(); await fs.unlink(path.join(directory, 'linked')) }
   })
   it('loads overlay-only plugins and validates their entry', async () => {
     const globalDir = roots[roots.length - 1]

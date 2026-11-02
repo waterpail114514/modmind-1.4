@@ -98,6 +98,7 @@ try {
   await page.locator('.modpack-mod-list-page').waitFor()
   await page.screenshot({ path: path.join(run, 'import-complete.png') })
   const exportedPath = path.join(run, 'roundtrip.mrpack')
+  await page.evaluate(async () => window.modmind.production.release.saveSettings({ ...await window.modmind.production.release.getSettings(), modpackExportMode: 'download' }))
   await app.evaluate(({ dialog }, filePath) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath }) }, exportedPath)
   assert.equal(await page.evaluate(() => window.modmind.project.exportArtifact()), exportedPath)
   const exportedRoot = path.join(run, 'roundtrip')
